@@ -73,6 +73,34 @@ class MatchEngine(private val context: Context) {
         }
     }
 
+    /**
+     * 按歌手批量匹配：不关心歌曲，直接对每位歌手搜索 + 下载一次。
+     * 歌手视图的多选下载走这里。
+     */
+    suspend fun matchArtists(
+        artists: List<String>,
+        orderedPlatforms: List<Platform>,
+        outputDir: DocumentFile,
+        overwrite: Boolean,
+        onArtistDone: (ArtistOutcome) -> Unit,
+        onProgress: (done: Int, total: Int) -> Unit,
+    ) {
+        if (artists.isEmpty()) return
+        val sources = SourceRegistry.ordered(orderedPlatforms)
+        val total = artists.size
+        var done = 0
+        onProgress(done, total)
+
+        for (artist in artists) {
+            coroutineContext.ensureActive()
+            val outcome = resolveArtist(artist, sources, outputDir, overwrite)
+            onArtistDone(outcome)
+            done++
+            onProgress(done, total)
+            delay(REQUEST_GAP_MS)
+        }
+    }
+
     private fun resolveArtist(
         artist: String,
         sources: List<ArtistImageSource>,

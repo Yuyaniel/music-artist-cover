@@ -69,7 +69,8 @@ fun SongPage(
     isScanning: Boolean,
     songs: List<SongItem>,
     artistGroups: List<ArtistGroup>,
-    selectedIds: Set<String>,
+    selectedSongIds: Set<String>,
+    selectedArtistNames: Set<String>,
     selectionMode: Boolean,
     savedFiles: SavedFiles,
     platformOrder: List<Platform>,
@@ -81,13 +82,16 @@ fun SongPage(
     onToggleSelectionMode: () -> Unit,
     onPickFolder: () -> Unit,
     onRescan: () -> Unit,
-    onToggle: (String) -> Unit,
-    onSelectAll: (List<SongItem>) -> Unit,
+    onToggleSong: (String) -> Unit,
+    onToggleArtist: (String) -> Unit,
+    onSelectAllSongs: (List<SongItem>) -> Unit,
+    onSelectAllArtists: (List<ArtistGroup>) -> Unit,
     onClearSelection: () -> Unit,
     onSingleMatch: (SongItem) -> Unit,
     onArtistMatch: (ArtistGroup) -> Unit,
     onTogglePlatform: (Platform) -> Unit,
-    onBatchDownload: () -> Unit,
+    onBatchDownloadSongs: () -> Unit,
+    onBatchDownloadArtists: () -> Unit,
 ) {
     var view by remember { mutableStateOf(LibraryView.SONGS) }
     var searchActive by remember { mutableStateOf(false) }
@@ -128,6 +132,9 @@ fun SongPage(
         if (keyword.isEmpty()) artistGroups else artistGroups.filter { NameMatcher.normalize(it.name).contains(keyword) }
     }
 
+    val artistMode = view == LibraryView.ARTISTS
+    val activeSelectedCount = if (artistMode) selectedArtistNames.size else selectedSongIds.size
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
@@ -144,7 +151,8 @@ fun SongPage(
                     ) {
                         Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
                     }
-                    if (view == LibraryView.SONGS && songs.isNotEmpty()) {
+                    val hasContent = if (artistMode) artistGroups.isNotEmpty() else songs.isNotEmpty()
+                    if (hasContent) {
                         TextButton(onClick = onToggleSelectionMode) {
                             Text(
                                 if (selectionMode) stringResource(R.string.multi_select_done)
@@ -161,7 +169,7 @@ fun SongPage(
             if (searchActive) {
                 SearchField(
                     query = query,
-                    hint = if (view == LibraryView.ARTISTS) {
+                    hint = if (artistMode) {
                         stringResource(R.string.search_hint_artists)
                     } else {
                         stringResource(R.string.search_hint_songs)
@@ -220,23 +228,36 @@ fun SongPage(
                         )
                     }
 
-                    view == LibraryView.ARTISTS -> {
+                    artistMode -> {
                         if (visibleArtists.isEmpty()) {
                             item { ListEmptyState(stringResource(R.string.no_search_result)) }
                         } else {
                             item {
-                                Text(
-                                    text = if (keyword.isEmpty()) {
-                                        stringResource(R.string.artists_summary, visibleArtists.size)
-                                    } else {
-                                        stringResource(R.string.found_artists, visibleArtists.size)
+                                SelectionBar(
+                                    summary = when {
+                                        selectionMode -> stringResource(
+                                            R.string.selected_artists,
+                                            selectedArtistNames.size,
+                                            visibleArtists.size,
+                                        )
+
+                                        keyword.isNotEmpty() -> stringResource(R.string.found_artists, visibleArtists.size)
+                                        else -> stringResource(R.string.artists_summary, visibleArtists.size)
                                     },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MutedText,
+                                    selectionMode = selectionMode,
+                                    onSelectAll = { onSelectAllArtists(visibleArtists) },
+                                    onClearSelection = onClearSelection,
                                 )
                             }
                             items(items = visibleArtists, key = { "artist-${it.name}" }) { group ->
-                                ArtistRow(group = group, onClick = { onArtistMatch(group) })
+                                ArtistRow(
+                                    group = group,
+                                    selectionMode = selectionMode,
+                                    checked = group.name in selectedArtistNames,
+                                    onClick = {
+                                        if (selectionMode) onToggleArtist(group.name) else onArtistMatch(group)
+                                    },
+                                )
                             }
                         }
                     }
@@ -247,11 +268,18 @@ fun SongPage(
                         } else {
                             item {
                                 SelectionBar(
+                                    summary = when {
+                                        selectionMode -> stringResource(
+                                            R.string.selected_summary,
+                                            selectedSongIds.size,
+                                            visibleSongs.size,
+                                        )
+
+                                        keyword.isNotEmpty() -> stringResource(R.string.found_songs, visibleSongs.size)
+                                        else -> stringResource(R.string.tap_to_match_hint)
+                                    },
                                     selectionMode = selectionMode,
-                                    selectedCount = selectedIds.size,
-                                    total = visibleSongs.size,
-                                    searching = keyword.isNotEmpty(),
-                                    onSelectAll = { onSelectAll(visibleSongs) },
+                                    onSelectAll = { onSelectAllSongs(visibleSongs) },
                                     onClearSelection = onClearSelection,
                                 )
                             }
@@ -259,9 +287,11 @@ fun SongPage(
                                 SongRow(
                                     song = song,
                                     selectionMode = selectionMode,
-                                    checked = song.id in selectedIds,
+                                    checked = song.id in selectedSongIds,
                                     downloadState = downloadStateOf(song.artistList, savedFiles),
-                                    onClick = { if (selectionMode) onToggle(song.id) else onSingleMatch(song) },
+                                    onClick = {
+                                        if (selectionMode) onToggleSong(song.id) else onSingleMatch(song)
+                                    },
                                 )
                             }
                         }
@@ -274,12 +304,17 @@ fun SongPage(
                     platformOrder = platformOrder,
                     enabledPlatforms = enabledPlatforms,
                     onTogglePlatform = onTogglePlatform,
-                    selectedCount = selectedIds.size,
+                    selectedCount = activeSelectedCount,
+                    countText = if (artistMode) {
+                        stringResource(R.string.selected_artists_count, activeSelectedCount)
+                    } else {
+                        stringResource(R.string.selected_count, activeSelectedCount)
+                    },
                     outputReady = outputFolderReady,
                     matching = matching,
                     progressDone = progressDone,
                     progressTotal = progressTotal,
-                    onDownload = onBatchDownload,
+                    onDownload = if (artistMode) onBatchDownloadArtists else onBatchDownloadSongs,
                 )
             }
         }
@@ -367,10 +402,8 @@ private fun FolderCard(
 
 @Composable
 private fun SelectionBar(
+    summary: String,
     selectionMode: Boolean,
-    selectedCount: Int,
-    total: Int,
-    searching: Boolean,
     onSelectAll: () -> Unit,
     onClearSelection: () -> Unit,
 ) {
@@ -380,11 +413,7 @@ private fun SelectionBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = when {
-                selectionMode -> stringResource(R.string.selected_summary, selectedCount, total)
-                searching -> stringResource(R.string.found_songs, total)
-                else -> stringResource(R.string.tap_to_match_hint)
-            },
+            text = summary,
             style = MaterialTheme.typography.bodyMedium,
             color = MutedText,
             modifier = Modifier.weight(1f),
@@ -408,6 +437,7 @@ private fun BatchActionBar(
     enabledPlatforms: Set<Platform>,
     onTogglePlatform: (Platform) -> Unit,
     selectedCount: Int,
+    countText: String,
     outputReady: Boolean,
     matching: Boolean,
     progressDone: Int,
@@ -460,7 +490,7 @@ private fun BatchActionBar(
                     text = when {
                         !outputReady -> stringResource(R.string.need_output)
                         enabledPlatforms.isEmpty() -> stringResource(R.string.no_platform_selected)
-                        else -> stringResource(R.string.selected_count, selectedCount)
+                        else -> countText
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (outputReady) MutedText else MaterialTheme.colorScheme.error,

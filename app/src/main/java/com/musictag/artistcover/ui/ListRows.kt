@@ -99,9 +99,18 @@ fun SongRow(
 
 /** 歌手列表的一行。 */
 @Composable
-fun ArtistRow(group: ArtistGroup, onClick: () -> Unit) {
+fun ArtistRow(
+    group: ArtistGroup,
+    selectionMode: Boolean,
+    checked: Boolean,
+    onClick: () -> Unit,
+) {
     SectionCard(modifier = Modifier.clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (selectionMode) {
+                Checkbox(checked = checked, onCheckedChange = { onClick() })
+                Spacer(modifier = Modifier.width(4.dp))
+            }
             LocalArtistThumb(fileName = group.savedFileName, uri = group.savedUri, size = 48.dp)
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -129,12 +138,14 @@ fun ArtistRow(group: ArtistGroup, onClick: () -> Unit) {
             Spacer(modifier = Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
                 DownloadBadge(group.downloadState)
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = stringResource(R.string.single_match),
-                    tint = FaintText,
-                    modifier = Modifier.size(20.dp),
-                )
+                if (!selectionMode) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = stringResource(R.string.single_match),
+                        tint = FaintText,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
     }

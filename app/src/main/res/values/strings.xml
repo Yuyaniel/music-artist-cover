@@ -31,6 +31,8 @@
 
     <string name="selected_summary">已选 %1$d 首 / 共 %2$d 首</string>
     <string name="selected_count">已选 %1$d 首</string>
+    <string name="selected_artists">已选 %1$d 位 / 共 %2$d 位</string>
+    <string name="selected_artists_count">已选 %1$d 位歌手</string>
     <string name="no_platform_selected">请至少选择一个下载平台</string>
     <string name="select_all">全选</string>
     <string name="clear_selection">清空</string>

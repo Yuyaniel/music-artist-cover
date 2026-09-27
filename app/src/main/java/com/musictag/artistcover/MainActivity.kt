@@ -38,6 +38,7 @@ import com.musictag.artistcover.data.AppLog
 import com.musictag.artistcover.data.ImageDownloader
 import com.musictag.artistcover.data.MatchEngine
 import com.musictag.artistcover.data.MetadataReader
+import com.musictag.artistcover.data.NameMatcher
 import com.musictag.artistcover.data.Prefs
 import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.SingleMatchEngine
@@ -99,6 +100,7 @@ private fun AppRoot() {
     var cachedAt by remember { mutableStateOf<Long?>(null) }
     var savedFiles by remember { mutableStateOf(SavedFiles.EMPTY) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedArtists by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selectionMode by remember { mutableStateOf(false) }
     var platformOrder by remember { mutableStateOf(prefs.platformOrder()) }
     var enabledPlatforms by remember { mutableStateOf(prefs.enabledPlatforms()) }
@@ -282,6 +284,73 @@ private fun AppRoot() {
         }
     }
 
+    /** 按歌手批量匹配：歌手视图的多选下载走这里，一位歌手只处理一次。 */
+    fun matchArtists(artists: List<String>) {
+        val outUri = outputTreeUri
+        when {
+            artists.isEmpty() -> notify(context.getString(R.string.need_selection))
+            outUri == null -> notify(context.getString(R.string.need_output))
+            matching -> Unit
+            else -> scope.launch {
+                val dir = withContext(Dispatchers.IO) { DocumentFile.fromTreeUri(context, outUri) }
+                if (dir == null || !dir.canWrite()) {
+                    AppLog.e("保存文件夹不可写，请重新选择")
+                    notify(context.getString(R.string.need_output))
+                    return@launch
+                }
+                val activePlatforms = platformOrder.filter { it in enabledPlatforms }
+                if (activePlatforms.isEmpty()) {
+                    notify(context.getString(R.string.no_platform_selected))
+                    return@launch
+                }
+                matching = true
+                progressDone = 0
+                progressTotal = artists.size
+                AppLog.i(
+                    "开始按歌手匹配 ${artists.size} 位，来源：${activePlatforms.joinToString("、") { it.displayName }}" +
+                        if (overwrite) "，覆盖旧图" else "，保留旧图",
+                )
+                withContext(Dispatchers.IO) {
+                    MatchEngine(context).matchArtists(
+                        artists = artists,
+                        orderedPlatforms = activePlatforms,
+                        outputDir = dir,
+                        overwrite = overwrite,
+                        onArtistDone = { outcome ->
+                            val key = NameMatcher.normalize(outcome.artist)
+                            songs = songs.map { song ->
+                                if (song.artistList.none { NameMatcher.normalize(it) == key }) {
+                                    song
+                                } else {
+                                    song.copy(
+                                        matchState = when {
+                                            outcome.hit == null -> MatchState.NOT_FOUND
+                                            outcome.fileName == null -> MatchState.FAILED
+                                            outcome.savedNow -> MatchState.DONE
+                                            else -> MatchState.EXISTS
+                                        },
+                                        matchedArtist = outcome.hit?.name ?: song.matchedArtist,
+                                        platform = outcome.hit?.platform ?: song.platform,
+                                        savedName = outcome.fileName ?: song.savedName,
+                                        error = outcome.error,
+                                    )
+                                }
+                            }
+                        },
+                        onProgress = { done, total ->
+                            progressDone = done
+                            progressTotal = total
+                        },
+                    )
+                }
+                matching = false
+                refreshSavedFiles()
+                AppLog.i("按歌手匹配结束，共处理 ${artists.size} 位")
+                tab = AppTab.Settings
+            }
+        }
+    }
+
     val artistGroups: List<ArtistGroup> = remember(songs, savedFiles) {
         if (songs.isEmpty()) {
             emptyList()
@@ -328,7 +397,8 @@ private fun AppRoot() {
                     isScanning = scanning,
                     songs = songs,
                     artistGroups = artistGroups,
-                    selectedIds = selectedIds,
+                    selectedSongIds = selectedIds,
+                    selectedArtistNames = selectedArtists,
                     selectionMode = selectionMode,
                     savedFiles = savedFiles,
                     platformOrder = platformOrder,
@@ -338,17 +408,27 @@ private fun AppRoot() {
                     progressDone = progressDone,
                     progressTotal = progressTotal,
                     onToggleSelectionMode = {
-                        if (selectionMode) selectedIds = emptySet()
+                        if (selectionMode) {
+                            selectedIds = emptySet()
+                            selectedArtists = emptySet()
+                        }
                         selectionMode = !selectionMode
                     },
                     onPickFolder = { songFolderPicker.launch(null) },
                     onRescan = { songTreeUri?.let { scanFolder(it, songFolderName) } },
-                    onToggle = { id ->
+                    onToggleSong = { id ->
                         selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
                     },
-                    // 全选只作用于当前可见（可能被搜索过滤过）的歌曲
-                    onSelectAll = { visible -> selectedIds = selectedIds + visible.map { it.id } },
-                    onClearSelection = { selectedIds = emptySet() },
+                    onToggleArtist = { name ->
+                        selectedArtists = if (name in selectedArtists) selectedArtists - name else selectedArtists + name
+                    },
+                    // 全选只作用于当前可见（可能被搜索过滤过）的条目
+                    onSelectAllSongs = { visible -> selectedIds = selectedIds + visible.map { it.id } },
+                    onSelectAllArtists = { visible -> selectedArtists = selectedArtists + visible.map { it.name } },
+                    onClearSelection = {
+                        selectedIds = emptySet()
+                        selectedArtists = emptySet()
+                    },
                     onSingleMatch = { song ->
                         matchTarget = MatchTarget(
                             title = song.displayTitle,
@@ -368,7 +448,9 @@ private fun AppRoot() {
                         )
                     },
                     onTogglePlatform = { togglePlatform(it) },
-                    onBatchDownload = { matchSongs(songs.filter { it.id in selectedIds }) },
+                    onBatchDownloadSongs = { matchSongs(songs.filter { it.id in selectedIds }) },
+                    // 按歌手名字在当前列表里的顺序处理，保持与界面一致的顺序
+                    onBatchDownloadArtists = { matchArtists(artistGroups.filter { it.name in selectedArtists }.map { it.name }) },
                 )
 
                 AppTab.Settings -> MatchPage(
