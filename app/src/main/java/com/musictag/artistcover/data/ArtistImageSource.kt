@@ -57,7 +57,6 @@ object SourceRegistry {
     private val all: Map<Platform, ArtistImageSource> = mapOf(
         Platform.NETEASE to NeteaseSource,
         Platform.QQ to QqMusicSource,
-        Platform.DEEZER to DeezerSource,
     )
 
     /** 按传入顺序挑出可用的数据源——顺序即失败降级顺序，由用户在设置里调整。 */

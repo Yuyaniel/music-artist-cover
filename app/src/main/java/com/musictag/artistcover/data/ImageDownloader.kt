@@ -155,11 +155,10 @@ object ImageDownloader {
         return save(context, treeUri, fileName, bytes, overwrite)
     }
 
-    /** Deezer 的 CDN 不需要 Referer，返回空串即可（HttpClient 会跳过空 Referer）。 */
+    /** 两家图片 CDN 都校验 Referer，取图时一并带上。 */
     fun refererOf(platform: Platform): String = when (platform) {
         Platform.NETEASE -> "https://music.163.com/"
         Platform.QQ -> "https://y.qq.com/"
-        Platform.DEEZER -> ""
     }
 
     private fun createAndWrite(

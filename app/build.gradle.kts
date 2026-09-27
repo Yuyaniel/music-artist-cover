@@ -16,7 +16,7 @@ android {
         // versionCode 用秒级时间戳单调递增，保证任何一次构建都能覆盖安装；
         // versionName 给用户看的，保持干净的语义化版本。
         versionCode = (System.currentTimeMillis() / 1000L).toInt()
-        versionName = "1.1.1"
+        versionName = "1.2.0"
     }
 
     buildTypes {

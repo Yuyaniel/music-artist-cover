@@ -7,7 +7,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 enum class Platform(val id: String, val displayName: String) {
     NETEASE("netease", "网易云音乐"),
     QQ("qq", "QQ音乐"),
-    DEEZER("deezer", "Deezer"),
 }
 
 /** 歌手名的来源：内置标签 / 文件名解析 / 未识别。 */
