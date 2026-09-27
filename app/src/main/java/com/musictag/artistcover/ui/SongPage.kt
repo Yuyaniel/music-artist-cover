@@ -14,12 +14,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -79,6 +83,10 @@ fun SongPage(
     matching: Boolean,
     progressDone: Int,
     progressTotal: Int,
+    songSort: SongSort,
+    artistSort: ArtistSort,
+    onSelectSongSort: (SongSort) -> Unit,
+    onSelectArtistSort: (ArtistSort) -> Unit,
     onToggleSelectionMode: () -> Unit,
     onPickFolder: () -> Unit,
     onRescan: () -> Unit,
@@ -118,8 +126,8 @@ fun SongPage(
     }
 
     val keyword = NameMatcher.normalize(query)
-    val visibleSongs = remember(songs, keyword) {
-        if (keyword.isEmpty()) {
+    val visibleSongs = remember(songs, keyword, songSort) {
+        val base = if (keyword.isEmpty()) {
             songs
         } else {
             songs.filter { song ->
@@ -127,9 +135,36 @@ fun SongPage(
                     song.artistList.any { NameMatcher.normalize(it).contains(keyword) }
             }
         }
+        // addedAt 为 0（拿不到修改时间）的一律排到最后
+        when (songSort) {
+            SongSort.ADDED_DESC -> base.sortedWith(
+                compareBy<SongItem> { it.addedAt == 0L }.thenByDescending { it.addedAt },
+            )
+
+            SongSort.ADDED_ASC -> base.sortedWith(
+                compareBy<SongItem> { it.addedAt == 0L }.thenBy { it.addedAt },
+            )
+        }
     }
-    val visibleArtists = remember(artistGroups, keyword) {
-        if (keyword.isEmpty()) artistGroups else artistGroups.filter { NameMatcher.normalize(it.name).contains(keyword) }
+    val visibleArtists = remember(artistGroups, keyword, artistSort) {
+        val base = if (keyword.isEmpty()) {
+            artistGroups
+        } else {
+            artistGroups.filter { NameMatcher.normalize(it.name).contains(keyword) }
+        }
+        when (artistSort) {
+            ArtistSort.COUNT_DESC -> base.sortedWith(
+                compareByDescending<ArtistGroup> { it.songCount }.thenBy { it.name },
+            )
+
+            ArtistSort.COUNT_ASC -> base.sortedWith(
+                compareBy<ArtistGroup> { it.songCount }.thenBy { it.name },
+            )
+
+            ArtistSort.RECENT_DESC -> base.sortedWith(
+                compareBy<ArtistGroup> { it.latestAddedAt == 0L }.thenByDescending { it.latestAddedAt },
+            )
+        }
     }
 
     val artistMode = view == LibraryView.ARTISTS
@@ -202,18 +237,42 @@ fun SongPage(
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            FilterChip(
-                                selected = view == LibraryView.SONGS,
-                                onClick = { view = LibraryView.SONGS },
-                                label = { Text(stringResource(R.string.view_songs)) },
-                            )
-                            FilterChip(
-                                selected = view == LibraryView.ARTISTS,
-                                onClick = { view = LibraryView.ARTISTS },
-                                label = { Text(stringResource(R.string.view_artists)) },
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = view == LibraryView.SONGS,
+                                    onClick = { view = LibraryView.SONGS },
+                                    label = { Text(stringResource(R.string.view_songs)) },
+                                )
+                                FilterChip(
+                                    selected = view == LibraryView.ARTISTS,
+                                    onClick = { view = LibraryView.ARTISTS },
+                                    label = { Text(stringResource(R.string.view_artists)) },
+                                )
+                            }
+
+                            val options = if (artistMode) {
+                                ArtistSort.entries.map { it.id to stringResource(it.labelRes) }
+                            } else {
+                                SongSort.entries.map { it.id to stringResource(it.labelRes) }
+                            }
+                            SortMenu(
+                                label = if (artistMode) {
+                                    stringResource(artistSort.labelRes)
+                                } else {
+                                    stringResource(songSort.labelRes)
+                                },
+                                options = options,
+                                selectedId = if (artistMode) artistSort.id else songSort.id,
+                                onSelect = { id ->
+                                    if (artistMode) {
+                                        onSelectArtistSort(ArtistSort.from(id))
+                                    } else {
+                                        onSelectSongSort(SongSort.from(id))
+                                    }
+                                },
                             )
                         }
                     }
@@ -331,6 +390,42 @@ fun SongPage(
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowUp,
                     contentDescription = stringResource(R.string.back_to_top),
+                )
+            }
+        }
+    }
+}
+
+/** 排序下拉菜单：按钮上直接显示当前排序方式。 */
+@Composable
+private fun SortMenu(
+    label: String,
+    options: List<Pair<String, String>>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { expanded = true }) {
+            Text(text = label, maxLines = 1)
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = stringResource(R.string.sort),
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (id, text) ->
+                DropdownMenuItem(
+                    text = { Text(text) },
+                    onClick = {
+                        expanded = false
+                        onSelect(id)
+                    },
+                    trailingIcon = {
+                        if (id == selectedId) {
+                            Icon(Icons.Default.Check, contentDescription = null)
+                        }
+                    },
                 )
             }
         }

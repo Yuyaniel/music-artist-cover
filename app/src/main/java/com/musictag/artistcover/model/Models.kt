@@ -24,6 +24,8 @@ data class SongItem(
     val uri: Uri,
     val displayName: String,
     val sizeBytes: Long,
+    /** 文件最后修改时间，用于「添加时间」排序；0 表示未知。 */
+    val addedAt: Long = 0L,
     val title: String? = null,
     /** 原始歌手字符串（如「郭静/韦礼安」），仅用于展示。 */
     val artist: String? = null,
@@ -93,6 +95,8 @@ data class LocalArtistImage(
 data class ArtistGroup(
     val name: String,
     val songCount: Int,
+    /** 该歌手所有歌曲里最新的添加时间，用于「最近添加」排序。 */
+    val latestAddedAt: Long = 0L,
     /** 已下载时的文件名。 */
     val savedFileName: String? = null,
     /** 已下载图片的本地 Uri，用于列表缩略图。 */

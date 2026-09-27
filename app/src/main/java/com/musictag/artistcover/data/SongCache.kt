@@ -56,6 +56,7 @@ object SongCache {
         .put("id", song.id)
         .put("name", song.displayName)
         .put("size", song.sizeBytes)
+        .put("addedAt", song.addedAt)
         .put("title", song.title ?: JSONObject.NULL)
         .put("artist", song.artist ?: JSONObject.NULL)
         .put("source", song.artistSource.name)
@@ -72,6 +73,7 @@ object SongCache {
             uri = Uri.parse(id),
             displayName = json.optString("name"),
             sizeBytes = json.optLong("size"),
+            addedAt = json.optLong("addedAt"),
             title = json.optString("title").takeIf { it.isNotBlank() && it != "null" },
             artist = json.optString("artist").takeIf { it.isNotBlank() && it != "null" },
             artists = artists,

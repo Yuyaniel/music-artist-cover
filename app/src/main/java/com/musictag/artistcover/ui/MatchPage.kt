@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,17 +28,25 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musictag.artistcover.R
+import com.musictag.artistcover.data.ExtraImageFile
+import com.musictag.artistcover.data.LibraryCheckResult
 import com.musictag.artistcover.model.MatchState
 import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
 import com.musictag.artistcover.theme.FaintText
 import com.musictag.artistcover.theme.MutedText
+import com.musictag.artistcover.theme.SuccessColor
+import com.musictag.artistcover.theme.WarningColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +59,11 @@ fun MatchPage(
     onPickOutput: () -> Unit,
     overwrite: Boolean,
     onToggleOverwrite: (Boolean) -> Unit,
+    checkResult: LibraryCheckResult?,
+    checking: Boolean,
+    onRunCheck: () -> Unit,
+    onDeleteExtras: (List<ExtraImageFile>) -> Unit,
+    onMatchArtist: (String) -> Unit,
     results: List<SongItem>,
     appVersion: String,
     onRetry: (SongItem) -> Unit,
@@ -155,6 +169,16 @@ fun MatchPage(
                 }
             }
 
+            item {
+                CheckSection(
+                    result = checkResult,
+                    checking = checking,
+                    onRunCheck = onRunCheck,
+                    onDeleteExtras = onDeleteExtras,
+                    onMatchArtist = onMatchArtist,
+                )
+            }
+
             if (results.isNotEmpty()) {
                 item {
                     Text(
@@ -180,6 +204,134 @@ fun MatchPage(
                     Button(onClick = onOpenRepo, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.open_repo))
                     }
+                }
+            }
+        }
+    }
+}
+
+/** 本地检查：歌曲里的歌手 vs 保存文件夹里的图片。 */
+@Composable
+private fun CheckSection(
+    result: LibraryCheckResult?,
+    checking: Boolean,
+    onRunCheck: () -> Unit,
+    onDeleteExtras: (List<ExtraImageFile>) -> Unit,
+    onMatchArtist: (String) -> Unit,
+) {
+    var selectedExtras by remember(result) { mutableStateOf<Set<String>>(emptySet()) }
+
+    SectionCard(
+        title = stringResource(R.string.section_check),
+        subtitle = stringResource(R.string.check_hint),
+    ) {
+        Button(onClick = onRunCheck, enabled = !checking, modifier = Modifier.fillMaxWidth()) {
+            Text(if (checking) stringResource(R.string.checking) else stringResource(R.string.check_now))
+        }
+
+        if (result == null) return@SectionCard
+
+        if (result.isClean) {
+            Text(
+                text = stringResource(R.string.check_clean),
+                style = MaterialTheme.typography.bodySmall,
+                color = SuccessColor,
+            )
+            return@SectionCard
+        }
+
+        if (result.missing.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.check_missing_title, result.missing.size),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.check_missing_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = FaintText,
+            )
+            result.missing.forEach { item ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onMatchArtist(item.artist) },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = item.artist,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = stringResource(R.string.check_missing_item, item.songCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarningColor,
+                    )
+                }
+            }
+        }
+
+        if (result.extra.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.check_extra_title, result.extra.size),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.check_extra_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = FaintText,
+            )
+            result.extra.forEach { file ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selectedExtras = if (file.fileName in selectedExtras) {
+                                selectedExtras - file.fileName
+                            } else {
+                                selectedExtras + file.fileName
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = file.fileName in selectedExtras,
+                        onCheckedChange = {
+                            selectedExtras = if (file.fileName in selectedExtras) {
+                                selectedExtras - file.fileName
+                            } else {
+                                selectedExtras + file.fileName
+                            }
+                        },
+                    )
+                    Text(
+                        text = file.fileName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { selectedExtras = result.extra.map { it.fileName }.toSet() }) {
+                    Text(stringResource(R.string.select_all))
+                }
+                TextButton(onClick = { selectedExtras = emptySet() }) {
+                    Text(stringResource(R.string.clear_selection))
+                }
+                Button(
+                    onClick = { onDeleteExtras(result.extra.filter { it.fileName in selectedExtras }) },
+                    enabled = selectedExtras.isNotEmpty(),
+                ) {
+                    Text(stringResource(R.string.delete_selected, selectedExtras.size))
                 }
             }
         }

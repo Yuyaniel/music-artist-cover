@@ -35,7 +35,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.documentfile.provider.DocumentFile
 import com.musictag.artistcover.data.AppLog
+import com.musictag.artistcover.data.ExtraImageFile
 import com.musictag.artistcover.data.ImageDownloader
+import com.musictag.artistcover.data.LibraryCheckResult
+import com.musictag.artistcover.data.LibraryChecker
 import com.musictag.artistcover.data.MatchEngine
 import com.musictag.artistcover.data.MetadataReader
 import com.musictag.artistcover.data.NameMatcher
@@ -50,9 +53,11 @@ import com.musictag.artistcover.model.MatchTarget
 import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
 import com.musictag.artistcover.theme.MusicArtistTheme
+import com.musictag.artistcover.ui.ArtistSort
 import com.musictag.artistcover.ui.MatchPage
 import com.musictag.artistcover.ui.SingleMatchSheet
 import com.musictag.artistcover.ui.SongPage
+import com.musictag.artistcover.ui.SongSort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -110,6 +115,10 @@ private fun AppRoot() {
     var progressDone by remember { mutableStateOf(0) }
     var progressTotal by remember { mutableStateOf(0) }
     var matchTarget by remember { mutableStateOf<MatchTarget?>(null) }
+    var songSort by remember { mutableStateOf(SongSort.from(prefs.songSort)) }
+    var artistSort by remember { mutableStateOf(ArtistSort.from(prefs.artistSort)) }
+    var checkResult by remember { mutableStateOf<LibraryCheckResult?>(null) }
+    var checking by remember { mutableStateOf(false) }
 
     fun notify(message: String) {
         scope.launch { snackbarHostState.showSnackbar(message) }
@@ -157,6 +166,7 @@ private fun AppRoot() {
                         uri = doc.uri,
                         displayName = fileName,
                         sizeBytes = doc.length(),
+                        addedAt = doc.lastModified(),
                         title = meta.title,
                         artist = meta.artist,
                         artists = meta.artists,
@@ -183,13 +193,21 @@ private fun AppRoot() {
         songTreeUri?.let { uri ->
             songFolderName = withContext(Dispatchers.IO) { folderNameOf(uri) }
             val cached = withContext(Dispatchers.IO) { SongCache.load(context, uri.toString()) }
-            if (cached != null && cached.songs.isNotEmpty()) {
+            when {
+                cached != null && cached.songs.isNotEmpty() && cached.songs.all { it.addedAt == 0L } -> {
+                    // 旧版缓存没记录文件修改时间，重扫一次补齐，之后时间排序才可用
+                    AppLog.i("缓存缺少添加时间，重新扫描一次以支持时间排序")
+                    scanFolder(uri, null)
+                }
+
                 // 先用缓存秒开，只有手动刷新才重新扫描
-                songs = cached.songs
-                cachedAt = cached.savedAt
-                AppLog.i("已加载扫描缓存：${cached.songs.size} 首（未重新扫描）")
-            } else {
-                scanFolder(uri, null)
+                cached != null && cached.songs.isNotEmpty() -> {
+                    songs = cached.songs
+                    cachedAt = cached.savedAt
+                    AppLog.i("已加载扫描缓存：${cached.songs.size} 首（未重新扫描）")
+                }
+
+                else -> scanFolder(uri, null)
             }
         }
         outputTreeUri?.let { uri ->
@@ -279,6 +297,7 @@ private fun AppRoot() {
                 val partial = songs.count { it.id in ids && it.matchState == MatchState.PARTIAL }
                 AppLog.i("匹配结束：新下载 $done 首，已存在 $skipped 首，部分成功 $partial 首")
                 refreshSavedFiles()
+                checkResult = null
                 tab = AppTab.Settings
             }
         }
@@ -345,6 +364,7 @@ private fun AppRoot() {
                 }
                 matching = false
                 refreshSavedFiles()
+                checkResult = null
                 AppLog.i("按歌手匹配结束，共处理 ${artists.size} 位")
                 tab = AppTab.Settings
             }
@@ -356,21 +376,65 @@ private fun AppRoot() {
             emptyList()
         } else {
             val counts = LinkedHashMap<String, Int>()
-            songs.forEach { song -> song.artistList.forEach { name -> counts[name] = (counts[name] ?: 0) + 1 } }
-            counts.entries
-                .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-                .map { entry ->
-                    val fileName = ImageDownloader.safeFileName(entry.key)
-                    val uri = savedFiles.uriOf(fileName)
-                    ArtistGroup(
-                        name = entry.key,
-                        songCount = entry.value,
-                        savedFileName = if (uri != null) fileName else null,
-                        savedUri = uri,
-                    )
+            val latest = LinkedHashMap<String, Long>()
+            songs.forEach { song ->
+                song.artistList.forEach { name ->
+                    counts[name] = (counts[name] ?: 0) + 1
+                    latest[name] = maxOf(latest[name] ?: 0L, song.addedAt)
                 }
+            }
+            // 排序交给 SongPage（用户可切换），这里只负责聚合
+            counts.map { (name, songCount) ->
+                val fileName = ImageDownloader.safeFileName(name)
+                val uri = savedFiles.uriOf(fileName)
+                ArtistGroup(
+                    name = name,
+                    songCount = songCount,
+                    latestAddedAt = latest[name] ?: 0L,
+                    savedFileName = if (uri != null) fileName else null,
+                    savedUri = uri,
+                )
+            }
         }
     }
+
+    /** 本地检查：歌曲里的歌手 vs 保存文件夹里的图片。 */
+    fun runCheck() {
+        when {
+            songs.isEmpty() -> notify(context.getString(R.string.need_songs_first))
+            checking -> Unit
+            else -> scope.launch {
+                checking = true
+                val result = withContext(Dispatchers.IO) { LibraryChecker.check(songs, savedFiles) }
+                checkResult = result
+                checking = false
+                AppLog.i("本地检查：缺少 ${result.missing.size} 位歌手，多余 ${result.extra.size} 个文件")
+            }
+        }
+    }
+
+    /** 删除选中的多余图片，并用最新的目录内容重算检查结果。 */
+    fun deleteExtraImages(files: List<ExtraImageFile>) {
+        if (files.isEmpty()) return
+        scope.launch {
+            val deleted = withContext(Dispatchers.IO) { LibraryChecker.deleteExtras(context, files) }
+            val dir = withContext(Dispatchers.IO) { engine.resolveOutputDir(outputTreeUri) }
+            val fresh = engine.loadSavedFiles(dir)
+            savedFiles = fresh
+            checkResult = withContext(Dispatchers.IO) { LibraryChecker.check(songs, fresh) }
+            AppLog.i("已删除多余图片 $deleted 个")
+            notify(context.getString(R.string.deleted_files, deleted))
+        }
+    }
+
+    /** 从任意入口打开某个歌手的匹配面板，保证行为一致。 */
+    fun artistTarget(artist: String): MatchTarget = MatchTarget(
+        title = artist,
+        subtitle = context.getString(R.string.artist_song_count, songs.count { artist in it.artistList }),
+        artists = listOf(artist),
+        songId = null,
+        relatedSongs = songs.filter { artist in it.artistList },
+    )
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -407,6 +471,16 @@ private fun AppRoot() {
                     matching = matching,
                     progressDone = progressDone,
                     progressTotal = progressTotal,
+                    songSort = songSort,
+                    artistSort = artistSort,
+                    onSelectSongSort = { value ->
+                        songSort = value
+                        prefs.songSort = value.id
+                    },
+                    onSelectArtistSort = { value ->
+                        artistSort = value
+                        prefs.artistSort = value.id
+                    },
                     onToggleSelectionMode = {
                         if (selectionMode) {
                             selectedIds = emptySet()
@@ -438,15 +512,7 @@ private fun AppRoot() {
                             songId = song.id,
                         )
                     },
-                    onArtistMatch = { group ->
-                        matchTarget = MatchTarget(
-                            title = group.name,
-                            subtitle = context.getString(R.string.artist_song_count, group.songCount),
-                            artists = listOf(group.name),
-                            songId = null,
-                            relatedSongs = songs.filter { group.name in it.artistList },
-                        )
-                    },
+                    onArtistMatch = { group -> matchTarget = artistTarget(group.name) },
                     onTogglePlatform = { togglePlatform(it) },
                     onBatchDownloadSongs = { matchSongs(songs.filter { it.id in selectedIds }) },
                     // 按歌手名字在当前列表里的顺序处理，保持与界面一致的顺序
@@ -465,6 +531,11 @@ private fun AppRoot() {
                         overwrite = value
                         prefs.overwriteExisting = value
                     },
+                    checkResult = checkResult,
+                    checking = checking,
+                    onRunCheck = { runCheck() },
+                    onDeleteExtras = { files -> deleteExtraImages(files) },
+                    onMatchArtist = { artist -> matchTarget = artistTarget(artist) },
                     results = songs.filter { it.matchState != MatchState.IDLE },
                     appVersion = BuildConfig.VERSION_NAME,
                     onRetry = { song -> matchSongs(listOf(song)) },
@@ -487,6 +558,7 @@ private fun AppRoot() {
             overwrite = overwrite,
             onSaved = { savedTarget, outcome ->
                 refreshSavedFiles()
+                checkResult = null
                 savedTarget.songId?.let { songId ->
                     songs = songs.map { song ->
                         if (song.id != songId) {

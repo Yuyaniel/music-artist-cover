@@ -23,6 +23,16 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_OVERWRITE, true)
         set(value) = sp.edit().putBoolean(KEY_OVERWRITE, value).apply()
 
+    /** 歌曲列表排序方式（枚举 id）。 */
+    var songSort: String
+        get() = sp.getString(KEY_SONG_SORT, "added_desc") ?: "added_desc"
+        set(value) = sp.edit().putString(KEY_SONG_SORT, value).apply()
+
+    /** 歌手列表排序方式（枚举 id）。 */
+    var artistSort: String
+        get() = sp.getString(KEY_ARTIST_SORT, "count_desc") ?: "count_desc"
+        set(value) = sp.edit().putString(KEY_ARTIST_SORT, value).apply()
+
     /** 未设置过时默认全开。 */
     fun enabledPlatforms(): Set<Platform> {
         val raw = sp.getString(KEY_PLATFORMS, null) ?: return Platform.entries.toSet()
@@ -57,5 +67,7 @@ class Prefs(context: Context) {
         const val KEY_PLATFORMS = "enabled_platforms"
         const val KEY_PLATFORM_ORDER = "platform_order"
         const val KEY_OVERWRITE = "overwrite_existing"
+        const val KEY_SONG_SORT = "song_sort"
+        const val KEY_ARTIST_SORT = "artist_sort"
     }
 }
