@@ -32,8 +32,6 @@ data class SongItem(
     val artist: String? = null,
     /** 拆分后的歌手列表（如 ["郭静", "韦礼安"]），匹配时逐个处理。 */
     val artists: List<String> = emptyList(),
-    /** 专辑艺术家标签原值（ID3 TPE2 / Vorbis ALBUMARTIST），可能为空。 */
-    val albumArtist: String? = null,
     val artistSource: ArtistSourceKind = ArtistSourceKind.UNKNOWN,
     val matchState: MatchState = MatchState.IDLE,
     val matchedArtist: String? = null,

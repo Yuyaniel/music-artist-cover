@@ -69,7 +69,6 @@ object SongCache {
         .put("addedAt", song.addedAt)
         .put("title", song.title ?: JSONObject.NULL)
         .put("artist", song.artist ?: JSONObject.NULL)
-        .put("albumArtist", song.albumArtist ?: JSONObject.NULL)
         .put("source", song.artistSource.name)
         .put("artists", JSONArray().apply { song.artists.forEach { put(it) } })
 
@@ -87,7 +86,6 @@ object SongCache {
             addedAt = json.optLong("addedAt"),
             title = json.optString("title").takeIf { it.isNotBlank() && it != "null" },
             artist = json.optString("artist").takeIf { it.isNotBlank() && it != "null" },
-            albumArtist = json.optString("albumArtist").takeIf { it.isNotBlank() && it != "null" },
             artists = artists,
             artistSource = runCatching { ArtistSourceKind.valueOf(json.optString("source")) }
                 .getOrDefault(ArtistSourceKind.UNKNOWN),

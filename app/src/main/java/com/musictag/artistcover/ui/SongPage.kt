@@ -30,7 +30,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
@@ -102,7 +101,6 @@ fun SongPage(
     onTogglePlatform: (Platform) -> Unit,
     onBatchDownloadSongs: () -> Unit,
     onBatchDownloadArtists: () -> Unit,
-    onTagFix: () -> Unit,
 ) {
     var view by remember { mutableStateOf(LibraryView.SONGS) }
     var searchActive by remember { mutableStateOf(false) }
@@ -387,7 +385,6 @@ fun SongPage(
                     progressDone = progressDone,
                     progressTotal = progressTotal,
                     onDownload = if (artistMode) onBatchDownloadArtists else onBatchDownloadSongs,
-                    onTagFix = onTagFix,
                 )
             }
         }
@@ -552,7 +549,6 @@ private fun BatchActionBar(
     progressDone: Int,
     progressTotal: Int,
     onDownload: () -> Unit,
-    onTagFix: () -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -594,37 +590,23 @@ private fun BatchActionBar(
 
             Text(
                 text = when {
-                    selectedCount == 0 -> stringResource(R.string.selected_none)
-                    !outputReady -> stringResource(R.string.output_needed_for_download)
+                    !outputReady -> stringResource(R.string.need_output)
                     enabledPlatforms.isEmpty() -> stringResource(R.string.no_platform_selected)
                     else -> countText
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MutedText,
+                color = if (outputReady) MutedText else MaterialTheme.colorScheme.error,
             )
 
-            // 左边补标签（不需要保存目录），右边下载
-            Row(
+            Button(
+                onClick = onDownload,
+                enabled = !matching && selectedCount > 0 && outputReady && enabledPlatforms.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(
-                    onClick = onTagFix,
-                    enabled = !matching && selectedCount > 0,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(stringResource(R.string.tag_fix_button))
-                }
-                Button(
-                    onClick = onDownload,
-                    enabled = !matching && selectedCount > 0 && outputReady && enabledPlatforms.isNotEmpty(),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(
-                        if (matching) stringResource(R.string.matching)
-                        else stringResource(R.string.batch_download),
-                    )
-                }
+                Text(
+                    if (matching) stringResource(R.string.matching)
+                    else stringResource(R.string.batch_download),
+                )
             }
         }
     }

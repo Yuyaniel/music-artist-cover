@@ -42,10 +42,6 @@ import com.musictag.artistcover.data.LibraryChecker
 import com.musictag.artistcover.data.MatchEngine
 import com.musictag.artistcover.data.MetadataReader
 import com.musictag.artistcover.data.NameMatcher
-import com.musictag.artistcover.data.TagFixCandidate
-import com.musictag.artistcover.data.TagFixOutcome
-import com.musictag.artistcover.data.TagSupport
-import com.musictag.artistcover.data.TagWriteResult
 import com.musictag.artistcover.data.Prefs
 import com.musictag.artistcover.data.SaveOutcome
 import com.musictag.artistcover.data.SavedFiles
@@ -64,7 +60,6 @@ import com.musictag.artistcover.ui.MatchPage
 import com.musictag.artistcover.ui.SingleMatchSheet
 import com.musictag.artistcover.ui.SongPage
 import com.musictag.artistcover.ui.SongSort
-import com.musictag.artistcover.ui.TagFixDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -125,9 +120,6 @@ private fun AppRoot() {
     var artistSort by remember { mutableStateOf(ArtistSort.from(prefs.artistSort)) }
     var checkResult by remember { mutableStateOf<LibraryCheckResult?>(null) }
     var checking by remember { mutableStateOf(false) }
-    var tagCandidates by remember { mutableStateOf<List<TagFixCandidate>?>(null) }
-    var tagOutcomes by remember { mutableStateOf<List<TagFixOutcome>>(emptyList()) }
-    var tagWriting by remember { mutableStateOf(false) }
 
     fun notify(message: String) {
         scope.launch { snackbarHostState.showSnackbar(message) }
@@ -178,7 +170,6 @@ private fun AppRoot() {
                         title = meta.title,
                         artist = meta.artist,
                         artists = meta.artists,
-                        albumArtist = meta.albumArtist,
                         artistSource = meta.kind,
                     )
                 }
@@ -462,53 +453,6 @@ private fun AppRoot() {
         }
     }
 
-    /** 扫描勾选的歌曲里专辑艺术家为空的（支持 MP3 / FLAC）。 */
-    fun planTagFix() {
-        val selected = songs.filter { it.id in selectedIds }
-        if (selected.isEmpty()) {
-            notify(context.getString(R.string.selected_none))
-            return
-        }
-        val plan = TagSupport.planAlbumArtistFixes(selected)
-        tagCandidates = plan
-        tagOutcomes = emptyList()
-        AppLog.i("专辑艺术家补全：勾选 ${selected.size} 首，其中 ${plan.size} 首需要补全")
-    }
-
-    /** 就地写入专辑艺术家。全过程不改变文件长度，音频数据不受影响。 */
-    fun applyTagFix() {
-        val plan = tagCandidates ?: return
-        if (plan.isEmpty() || tagWriting) return
-        scope.launch {
-            tagWriting = true
-            val outcomes = withContext(Dispatchers.IO) {
-                plan.map { candidate ->
-                    TagFixOutcome(
-                        candidate.song,
-                        TagSupport.writeAlbumArtist(
-                            context,
-                            candidate.song.uri,
-                            candidate.song.displayName,
-                            candidate.target,
-                        ),
-                    )
-                }
-            }
-            tagWriting = false
-            tagOutcomes = outcomes
-            tagCandidates = null
-
-            val written = outcomes.mapNotNull { outcome ->
-                (outcome.result as? TagWriteResult.Written)?.let { outcome.song.id to it.value }
-            }.toMap()
-            songs = songs.map { song -> written[song.id]?.let { song.copy(albumArtist = it) } ?: song }
-
-            val ok = written.size
-            AppLog.i("专辑艺术家补全完成：成功 $ok / ${plan.size}（其余已跳过或失败，详见页面）")
-            notify(context.getString(R.string.tag_fix_done, ok, plan.size))
-        }
-    }
-
     /** 从任意入口打开某个歌手的匹配面板，保证行为一致。 */
     fun artistTarget(artist: String): MatchTarget = MatchTarget(
         title = artist,
@@ -599,7 +543,6 @@ private fun AppRoot() {
                     onBatchDownloadSongs = { matchSongs(songs.filter { it.id in selectedIds }) },
                     // 按歌手名字在当前列表里的顺序处理，保持与界面一致的顺序
                     onBatchDownloadArtists = { matchArtists(artistGroups.filter { it.name in selectedArtists }.map { it.name }) },
-                    onTagFix = { planTagFix() },
                 )
 
                 AppTab.Settings -> MatchPage(
@@ -668,16 +611,4 @@ private fun AppRoot() {
         )
     }
 
-    if (tagCandidates != null || tagOutcomes.isNotEmpty()) {
-        TagFixDialog(
-            candidates = tagCandidates ?: emptyList(),
-            outcomes = tagOutcomes,
-            writing = tagWriting,
-            onConfirm = { applyTagFix() },
-            onDismiss = {
-                tagCandidates = null
-                tagOutcomes = emptyList()
-            },
-        )
-    }
 }
