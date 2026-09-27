@@ -84,6 +84,8 @@ fun SingleMatchSheet(
     savedFiles: SavedFiles,
     overwrite: Boolean,
     onSaved: (MatchTarget, SaveOutcome) -> Unit,
+    /** 单个歌手单独保存：不关闭面板，方便接着存下一位。 */
+    onArtistSaved: (MatchTarget, SaveOutcome) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -103,6 +105,9 @@ fun SingleMatchSheet(
     var searchNames by remember(target) { mutableStateOf(target.artists) }
     var editingIndex by remember(target) { mutableStateOf(-1) }
     var editText by remember(target) { mutableStateOf("") }
+    /** 已单独保存过的歌手，用于在框内做「已保存」标记。 */
+    var savedArtists by remember(target) { mutableStateOf<Set<String>>(emptySet()) }
+    var savingArtist by remember(target) { mutableStateOf<String?>(null) }
 
     fun queries(): List<ArtistQuery> = target.artists.mapIndexed { index, artist ->
         ArtistQuery(artist, searchNames.getOrElse(index) { artist })
@@ -111,8 +116,22 @@ fun SingleMatchSheet(
     fun runSearch() {
         scope.launch {
             searching = true
+            savedArtists = emptySet()
             matches = engine.search(queries(), platform, target.title)
             searching = false
+        }
+    }
+
+    /** 只保存某一位歌手，保存完不关面板。 */
+    fun runSaveOne(artist: String) {
+        val treeUri = outputTreeUri ?: return
+        val match = matches.firstOrNull { it.artist == artist } ?: return
+        scope.launch {
+            savingArtist = artist
+            val outcome = engine.save(treeUri, listOf(match), overwrite)
+            savingArtist = null
+            if (outcome.savedName != null) savedArtists = savedArtists + artist
+            onArtistSaved(target, outcome)
         }
     }
 
@@ -251,7 +270,13 @@ fun SingleMatchSheet(
                             onClick = { runSave() },
                             enabled = !saving && !searching && outputTreeUri != null && matches.any { it.hasImage },
                         ) {
-                            Text(if (saving) stringResource(R.string.saving) else stringResource(R.string.save_images))
+                            Text(
+                                when {
+                                    saving -> stringResource(R.string.saving)
+                                    matches.size > 1 -> stringResource(R.string.save_all)
+                                    else -> stringResource(R.string.save_images)
+                                },
+                            )
                         }
                         Spacer(modifier = Modifier.weight(1f))
                         TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
@@ -261,6 +286,12 @@ fun SingleMatchSheet(
                 matches.forEachIndexed { index, match ->
                     ArtistMatchCard(
                         match = match,
+                        // 多歌手时每位歌手单独给一个保存按钮，避免只能一起存
+                        showOwnSave = matches.size > 1,
+                        ownSaveEnabled = outputTreeUri != null && !saving && savingArtist == null,
+                        ownSaving = savingArtist == match.artist,
+                        alreadySaved = match.artist in savedArtists,
+                        onSaveOwn = { runSaveOne(match.artist) },
                         isEditing = editingIndex == index,
                         editText = editText,
                         onEditTextChange = { editText = it },
@@ -378,6 +409,11 @@ private fun LocalImages(
 @Composable
 private fun ArtistMatchCard(
     match: ArtistMatch,
+    showOwnSave: Boolean,
+    ownSaveEnabled: Boolean,
+    ownSaving: Boolean,
+    alreadySaved: Boolean,
+    onSaveOwn: () -> Unit,
     isEditing: Boolean,
     editText: String,
     onEditTextChange: (String) -> Unit,
@@ -505,6 +541,33 @@ private fun ArtistMatchCard(
                             highlighted = index == match.selected,
                         )
                     }
+                }
+            }
+        }
+
+        // 多歌手时才出现的单独保存按钮
+        if (showOwnSave) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (alreadySaved) {
+                    Text(
+                        text = stringResource(R.string.saved_label),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SuccessColor,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Button(
+                    onClick = onSaveOwn,
+                    enabled = ownSaveEnabled && match.hasImage,
+                ) {
+                    Text(
+                        if (ownSaving) stringResource(R.string.saving)
+                        else stringResource(R.string.save_this_one),
+                    )
                 }
             }
         }

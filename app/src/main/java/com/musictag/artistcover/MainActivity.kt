@@ -47,10 +47,13 @@ import com.musictag.artistcover.data.TagFixCandidate
 import com.musictag.artistcover.data.TagFixOutcome
 import com.musictag.artistcover.data.TagWriteResult
 import com.musictag.artistcover.data.Prefs
+import com.musictag.artistcover.data.SaveOutcome
 import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.SongCache
+import com.musictag.artistcover.data.downloadStateOf
 import com.musictag.artistcover.data.SongScanner
 import com.musictag.artistcover.model.ArtistGroup
+import com.musictag.artistcover.model.DownloadState
 import com.musictag.artistcover.model.MatchState
 import com.musictag.artistcover.model.MatchTarget
 import com.musictag.artistcover.model.Platform
@@ -419,6 +422,45 @@ private fun AppRoot() {
         }
     }
 
+    /**
+     * 单个歌手单独保存后的收尾。
+     *
+     * 只保存了多歌手中的一位，所以歌曲状态不能直接用这次的结果，
+     * 而是用最新的本地文件重新判定（全下完才算已下载，否则是部分下载）。
+     */
+    fun applySingleArtistSave(target: MatchTarget, outcome: SaveOutcome) {
+        scope.launch {
+            val fresh = withContext(Dispatchers.IO) { SavedFiles.load(context, outputTreeUri) }
+            savedFiles = fresh
+            checkResult = null
+
+            target.songId?.let { songId ->
+                songs = songs.map { song ->
+                    if (song.id != songId) {
+                        song
+                    } else {
+                        val local = downloadStateOf(song.artistList, fresh)
+                        song.copy(
+                            matchState = when (local) {
+                                DownloadState.DOWNLOADED -> MatchState.DONE
+                                DownloadState.PARTIAL -> MatchState.PARTIAL
+                                else -> song.matchState
+                            },
+                            matchedArtist = outcome.matchedArtist ?: song.matchedArtist,
+                            platform = outcome.platform ?: song.platform,
+                            savedName = outcome.savedName ?: song.savedName,
+                        )
+                    }
+                }
+            }
+
+            notify(
+                if (outcome.savedCount > 0) context.getString(R.string.save_done, outcome.savedCount)
+                else context.getString(R.string.save_none),
+            )
+        }
+    }
+
     /** 扫描专辑艺术家为空的 MP3。 */
     fun planTagFix() {
         if (songs.isEmpty()) {
@@ -595,6 +637,7 @@ private fun AppRoot() {
             outputTreeUri = outputTreeUri,
             savedFiles = savedFiles,
             overwrite = overwrite,
+            onArtistSaved = { savedTarget, outcome -> applySingleArtistSave(savedTarget, outcome) },
             onSaved = { savedTarget, outcome ->
                 refreshSavedFiles()
                 checkResult = null

@@ -141,6 +141,9 @@
     <string name="searching">搜索中…</string>
     <string name="search_again">重新搜索</string>
     <string name="save_images">保存图片</string>
+    <string name="save_this_one">保存这一位</string>
+    <string name="save_all">全部保存</string>
+    <string name="saved_label">已保存</string>
     <string name="saving">保存中…</string>
     <string name="close">关闭</string>
     <string name="matched_as">命中「%1$s」</string>
