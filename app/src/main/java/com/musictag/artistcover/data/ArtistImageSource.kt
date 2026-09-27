@@ -59,8 +59,9 @@ object SourceRegistry {
         Platform.QQ to QqMusicSource,
     )
 
-    fun ordered(platforms: Collection<Platform>): List<ArtistImageSource> =
-        Platform.entries.filter { it in platforms }.mapNotNull { all[it] }
+    /** 按传入顺序挑出可用的数据源——顺序即失败降级顺序，由用户在设置里调整。 */
+    fun ordered(platformsInOrder: List<Platform>): List<ArtistImageSource> =
+        platformsInOrder.mapNotNull { all[it] }
 
     fun sourceOf(platform: Platform): ArtistImageSource? = all[platform]
 }

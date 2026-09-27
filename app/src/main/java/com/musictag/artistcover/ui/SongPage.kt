@@ -20,13 +20,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -53,6 +56,7 @@ import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.downloadStateOf
 import com.musictag.artistcover.model.ArtistGroup
 import com.musictag.artistcover.model.ArtistSourceKind
+import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
 import com.musictag.artistcover.theme.FaintText
 import com.musictag.artistcover.theme.MutedText
@@ -75,6 +79,12 @@ fun SongPage(
     selectedIds: Set<String>,
     selectionMode: Boolean,
     savedFiles: SavedFiles,
+    platformOrder: List<Platform>,
+    enabledPlatforms: Set<Platform>,
+    outputFolderReady: Boolean,
+    matching: Boolean,
+    progressDone: Int,
+    progressTotal: Int,
     onToggleSelectionMode: () -> Unit,
     onPickFolder: () -> Unit,
     onRescan: () -> Unit,
@@ -83,6 +93,8 @@ fun SongPage(
     onClearSelection: () -> Unit,
     onSingleMatch: (SongItem) -> Unit,
     onArtistMatch: (ArtistGroup) -> Unit,
+    onTogglePlatform: (Platform) -> Unit,
+    onBatchDownload: () -> Unit,
 ) {
     var view by remember { mutableStateOf(LibraryView.SONGS) }
 
@@ -108,7 +120,7 @@ fun SongPage(
         )
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -200,6 +212,103 @@ fun SongPage(
                             onClick = { if (selectionMode) onToggle(song.id) else onSingleMatch(song) },
                         )
                     }
+                }
+            }
+        }
+
+        if (selectionMode) {
+            BatchActionBar(
+                platformOrder = platformOrder,
+                enabledPlatforms = enabledPlatforms,
+                onTogglePlatform = onTogglePlatform,
+                selectedCount = selectedIds.size,
+                outputReady = outputFolderReady,
+                matching = matching,
+                progressDone = progressDone,
+                progressTotal = progressTotal,
+                onDownload = onBatchDownload,
+            )
+        }
+    }
+}
+
+/**
+ * 多选模式下才出现的底部操作条：选下载平台 + 批量下载。
+ * 平台选择与「设置」页共用同一份状态，两边始终一致。
+ */
+@Composable
+private fun BatchActionBar(
+    platformOrder: List<Platform>,
+    enabledPlatforms: Set<Platform>,
+    onTogglePlatform: (Platform) -> Unit,
+    selectedCount: Int,
+    outputReady: Boolean,
+    matching: Boolean,
+    progressDone: Int,
+    progressTotal: Int,
+    onDownload: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.download_platform),
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                platformOrder.forEach { platform ->
+                    FilterChip(
+                        selected = platform in enabledPlatforms,
+                        onClick = { onTogglePlatform(platform) },
+                        enabled = !matching,
+                        label = { Text(platform.displayName) },
+                    )
+                }
+            }
+
+            if (progressTotal > 0) {
+                LinearProgressIndicator(
+                    progress = { progressDone.toFloat() / progressTotal.toFloat() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = stringResource(R.string.progress_text, progressDone, progressTotal),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedText,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = when {
+                        !outputReady -> stringResource(R.string.need_output)
+                        enabledPlatforms.isEmpty() -> stringResource(R.string.no_platform_selected)
+                        else -> stringResource(R.string.selected_count, selectedCount)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (outputReady) MutedText else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = onDownload,
+                    enabled = !matching && selectedCount > 0 && outputReady &&
+                        enabledPlatforms.isNotEmpty(),
+                ) {
+                    Text(
+                        if (matching) stringResource(R.string.matching)
+                        else stringResource(R.string.batch_download),
+                    )
                 }
             }
         }

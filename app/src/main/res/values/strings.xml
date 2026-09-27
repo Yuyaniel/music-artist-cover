@@ -22,11 +22,18 @@
     <string name="clear_log">清空日志</string>
 
     <string name="selected_summary">已选 %1$d 首 / 共 %2$d 首</string>
+    <string name="selected_count">已选 %1$d 首</string>
+    <string name="no_platform_selected">请至少选择一个下载平台</string>
     <string name="select_all">全选</string>
     <string name="clear_selection">清空</string>
 
     <string name="section_platforms">图片来源</string>
-    <string name="platforms_hint">按顺序依次尝试，失败自动切换到下一个平台</string>
+    <string name="platforms_hint">数字是优先级顺序，失败自动切换到下一个；可用箭头调整</string>
+    <string name="move_up">上移</string>
+    <string name="move_down">下移</string>
+    <string name="batch_download">批量下载</string>
+    <string name="download_platform">下载平台</string>
+    <string name="batch_hint">下方选择平台后下载，勾选会保留</string>
     <string name="section_output">保存位置</string>
     <string name="start_match">一键匹配并下载</string>
     <string name="matching">匹配中…</string>

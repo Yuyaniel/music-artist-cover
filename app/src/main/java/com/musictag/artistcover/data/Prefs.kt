@@ -23,7 +23,7 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_OVERWRITE, true)
         set(value) = sp.edit().putBoolean(KEY_OVERWRITE, value).apply()
 
-    /** 未设置过时默认三平台全开。 */
+    /** 未设置过时默认全开。 */
     fun enabledPlatforms(): Set<Platform> {
         val raw = sp.getString(KEY_PLATFORMS, null) ?: return Platform.entries.toSet()
         val ids = raw.split(',').filter { it.isNotBlank() }.toSet()
@@ -36,10 +36,26 @@ class Prefs(context: Context) {
         sp.edit().putString(KEY_PLATFORMS, value).apply()
     }
 
+    /** 平台优先级顺序（用户在设置里用箭头调整）。 */
+    fun platformOrder(): List<Platform> {
+        val raw = sp.getString(KEY_PLATFORM_ORDER, null)
+        val saved = raw
+            ?.split(',')
+            ?.mapNotNull { id -> Platform.entries.firstOrNull { it.id == id.trim() } }
+            ?: emptyList()
+        // 追加后来才加入、但顺序表里还没有的平台
+        return saved + Platform.entries.filter { it !in saved }
+    }
+
+    fun setPlatformOrder(order: List<Platform>) {
+        sp.edit().putString(KEY_PLATFORM_ORDER, order.joinToString(",") { it.id }).apply()
+    }
+
     private companion object {
         const val KEY_SONG_TREE = "song_tree_uri"
         const val KEY_OUT_TREE = "output_tree_uri"
         const val KEY_PLATFORMS = "enabled_platforms"
+        const val KEY_PLATFORM_ORDER = "platform_order"
         const val KEY_OVERWRITE = "overwrite_existing"
     }
 }

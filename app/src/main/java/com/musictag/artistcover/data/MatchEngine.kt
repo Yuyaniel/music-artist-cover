@@ -29,14 +29,14 @@ class MatchEngine(private val context: Context) {
 
     suspend fun match(
         songs: List<SongItem>,
-        platforms: Set<Platform>,
+        orderedPlatforms: List<Platform>,
         outputDir: DocumentFile,
         overwrite: Boolean,
         onSongUpdated: (SongItem) -> Unit,
         onProgress: (done: Int, total: Int) -> Unit,
     ) {
         if (songs.isEmpty()) return
-        val sources = SourceRegistry.ordered(platforms)
+        val sources = SourceRegistry.ordered(orderedPlatforms)
         val total = songs.size
         val outcomes = LinkedHashMap<String, ArtistOutcome>()
         val finalized = HashSet<String>()

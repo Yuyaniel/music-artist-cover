@@ -13,9 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -38,19 +42,16 @@ import com.musictag.artistcover.theme.MutedText
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MatchPage(
-    platforms: Set<Platform>,
+    platformOrder: List<Platform>,
+    enabledPlatforms: Set<Platform>,
     onTogglePlatform: (Platform) -> Unit,
+    onMovePlatform: (Platform, Int) -> Unit,
     outputFolderName: String?,
     onPickOutput: () -> Unit,
     overwrite: Boolean,
     onToggleOverwrite: (Boolean) -> Unit,
-    selectedCount: Int,
-    matching: Boolean,
-    progressDone: Int,
-    progressTotal: Int,
     results: List<SongItem>,
     appVersion: String,
-    onStart: () -> Unit,
     onRetry: (SongItem) -> Unit,
     onOpenRepo: () -> Unit,
 ) {
@@ -72,18 +73,42 @@ fun MatchPage(
                     title = stringResource(R.string.section_platforms),
                     subtitle = stringResource(R.string.platforms_hint),
                 ) {
-                    Platform.entries.forEach { platform ->
+                    platformOrder.forEachIndexed { index, platform ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !matching) { onTogglePlatform(platform) },
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(platform.displayName, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "${index + 1}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedText,
+                                modifier = Modifier.width(18.dp),
+                            )
+                            Text(
+                                text = platform.displayName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { onMovePlatform(platform, -1) },
+                                enabled = index > 0,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowUp,
+                                    contentDescription = stringResource(R.string.move_up),
+                                )
+                            }
+                            IconButton(
+                                onClick = { onMovePlatform(platform, 1) },
+                                enabled = index < platformOrder.lastIndex,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = stringResource(R.string.move_down),
+                                )
+                            }
                             Switch(
-                                checked = platform in platforms,
-                                enabled = !matching,
+                                checked = platform in enabledPlatforms,
                                 onCheckedChange = { onTogglePlatform(platform) },
                             )
                         }
@@ -95,7 +120,7 @@ fun MatchPage(
                 SectionCard(
                     title = stringResource(R.string.section_output),
                     subtitle = outputFolderName,
-                    modifier = Modifier.clickable(enabled = !matching, onClick = onPickOutput),
+                    modifier = Modifier.clickable(onClick = onPickOutput),
                 ) {
                     Text(
                         text = if (outputFolderName == null) stringResource(R.string.pick_output_folder)
@@ -124,39 +149,7 @@ fun MatchPage(
                         )
                         Switch(
                             checked = overwrite,
-                            enabled = !matching,
                             onCheckedChange = onToggleOverwrite,
-                        )
-                    }
-                }
-            }
-
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = stringResource(R.string.section_batch),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Button(
-                        onClick = onStart,
-                        enabled = !matching && selectedCount > 0 && outputFolderName != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (matching) stringResource(R.string.matching)
-                            else stringResource(R.string.start_match),
-                        )
-                    }
-
-                    if (progressTotal > 0) {
-                        LinearProgressIndicator(
-                            progress = { progressDone.toFloat() / progressTotal.toFloat() },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            text = stringResource(R.string.progress_text, progressDone, progressTotal),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MutedText,
                         )
                     }
                 }
@@ -171,7 +164,7 @@ fun MatchPage(
                     )
                 }
                 items(items = results, key = { "result-${it.id}" }) { song ->
-                    ResultRow(song = song, onRetry = { onRetry(song) }, enabled = !matching)
+                    ResultRow(song = song, onRetry = { onRetry(song) }, enabled = true)
                 }
             }
 

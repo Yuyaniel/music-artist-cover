@@ -100,7 +100,8 @@ private fun AppRoot() {
     var savedFiles by remember { mutableStateOf(SavedFiles.EMPTY) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selectionMode by remember { mutableStateOf(false) }
-    var platforms by remember { mutableStateOf(prefs.enabledPlatforms()) }
+    var platformOrder by remember { mutableStateOf(prefs.platformOrder()) }
+    var enabledPlatforms by remember { mutableStateOf(prefs.enabledPlatforms()) }
     var overwrite by remember { mutableStateOf(prefs.overwriteExisting) }
     var scanning by remember { mutableStateOf(false) }
     var matching by remember { mutableStateOf(false) }
@@ -114,6 +115,24 @@ private fun AppRoot() {
 
     fun folderNameOf(uri: Uri): String? =
         runCatching { DocumentFile.fromTreeUri(context, uri)?.name }.getOrNull() ?: uri.lastPathSegment
+
+    fun togglePlatform(platform: Platform) {
+        enabledPlatforms = if (platform in enabledPlatforms) enabledPlatforms - platform else enabledPlatforms + platform
+        prefs.setEnabledPlatforms(enabledPlatforms)
+    }
+
+    /** 调整平台优先级：delta = -1 上移，+1 下移。 */
+    fun movePlatform(platform: Platform, delta: Int) {
+        val list = platformOrder.toMutableList()
+        val index = list.indexOf(platform)
+        val target = index + delta
+        if (index < 0 || target !in list.indices) return
+        val moving = list[index]
+        list[index] = list[target]
+        list[target] = moving
+        platformOrder = list
+        prefs.setPlatformOrder(list)
+    }
 
     fun refreshSavedFiles() {
         scope.launch {
@@ -226,15 +245,20 @@ private fun AppRoot() {
                 matching = true
                 progressDone = 0
                 progressTotal = target.size
+                val activePlatforms = platformOrder.filter { it in enabledPlatforms }
+                if (activePlatforms.isEmpty()) {
+                    notify(context.getString(R.string.no_platform_selected))
+                    return@launch
+                }
                 val artistCount = target.sumOf { it.artistList.size }
                 AppLog.i(
-                    "开始匹配 ${target.size} 首歌曲（含 $artistCount 个歌手条目），来源：${platforms.joinToString("、") { it.displayName }}" +
+                    "开始匹配 ${target.size} 首歌曲（含 $artistCount 个歌手条目），来源：${activePlatforms.joinToString("、") { it.displayName }}" +
                         if (overwrite) "，覆盖旧图" else "，保留旧图",
                 )
                 withContext(Dispatchers.IO) {
                     MatchEngine(context).match(
                         songs = target,
-                        platforms = platforms,
+                        orderedPlatforms = activePlatforms,
                         outputDir = dir,
                         overwrite = overwrite,
                         onSongUpdated = { updated ->
@@ -307,6 +331,12 @@ private fun AppRoot() {
                     selectedIds = selectedIds,
                     selectionMode = selectionMode,
                     savedFiles = savedFiles,
+                    platformOrder = platformOrder,
+                    enabledPlatforms = enabledPlatforms,
+                    outputFolderReady = outputFolderName != null,
+                    matching = matching,
+                    progressDone = progressDone,
+                    progressTotal = progressTotal,
                     onToggleSelectionMode = {
                         if (selectionMode) selectedIds = emptySet()
                         selectionMode = !selectionMode
@@ -336,14 +366,15 @@ private fun AppRoot() {
                             relatedSongs = songs.filter { group.name in it.artistList },
                         )
                     },
+                    onTogglePlatform = { togglePlatform(it) },
+                    onBatchDownload = { matchSongs(songs.filter { it.id in selectedIds }) },
                 )
 
                 AppTab.Settings -> MatchPage(
-                    platforms = platforms,
-                    onTogglePlatform = { platform ->
-                        platforms = if (platform in platforms) platforms - platform else platforms + platform
-                        prefs.setEnabledPlatforms(platforms)
-                    },
+                    platformOrder = platformOrder,
+                    enabledPlatforms = enabledPlatforms,
+                    onTogglePlatform = { togglePlatform(it) },
+                    onMovePlatform = { platform, delta -> movePlatform(platform, delta) },
                     outputFolderName = outputFolderName,
                     onPickOutput = { outputFolderPicker.launch(null) },
                     overwrite = overwrite,
@@ -351,13 +382,8 @@ private fun AppRoot() {
                         overwrite = value
                         prefs.overwriteExisting = value
                     },
-                    selectedCount = selectedIds.size,
-                    matching = matching,
-                    progressDone = progressDone,
-                    progressTotal = progressTotal,
                     results = songs.filter { it.matchState != MatchState.IDLE },
                     appVersion = BuildConfig.VERSION_NAME,
-                    onStart = { matchSongs(songs.filter { it.id in selectedIds }) },
                     onRetry = { song -> matchSongs(listOf(song)) },
                     onOpenRepo = {
                         runCatching {
