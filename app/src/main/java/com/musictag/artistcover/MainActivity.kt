@@ -41,10 +41,10 @@ import com.musictag.artistcover.data.LibraryCheckResult
 import com.musictag.artistcover.data.LibraryChecker
 import com.musictag.artistcover.data.MatchEngine
 import com.musictag.artistcover.data.MetadataReader
-import com.musictag.artistcover.data.Mp3TagWriter
 import com.musictag.artistcover.data.NameMatcher
 import com.musictag.artistcover.data.TagFixCandidate
 import com.musictag.artistcover.data.TagFixOutcome
+import com.musictag.artistcover.data.TagSupport
 import com.musictag.artistcover.data.TagWriteResult
 import com.musictag.artistcover.data.Prefs
 import com.musictag.artistcover.data.SaveOutcome
@@ -64,6 +64,7 @@ import com.musictag.artistcover.ui.MatchPage
 import com.musictag.artistcover.ui.SingleMatchSheet
 import com.musictag.artistcover.ui.SongPage
 import com.musictag.artistcover.ui.SongSort
+import com.musictag.artistcover.ui.TagFixDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -461,16 +462,17 @@ private fun AppRoot() {
         }
     }
 
-    /** 扫描专辑艺术家为空的 MP3。 */
+    /** 扫描勾选的歌曲里专辑艺术家为空的（支持 MP3 / FLAC）。 */
     fun planTagFix() {
-        if (songs.isEmpty()) {
-            notify(context.getString(R.string.need_songs_first))
+        val selected = songs.filter { it.id in selectedIds }
+        if (selected.isEmpty()) {
+            notify(context.getString(R.string.selected_none))
             return
         }
-        val plan = Mp3TagWriter.planAlbumArtistFixes(songs)
+        val plan = TagSupport.planAlbumArtistFixes(selected)
         tagCandidates = plan
         tagOutcomes = emptyList()
-        AppLog.i("专辑艺术家补全：找到 ${plan.size} 首待处理")
+        AppLog.i("专辑艺术家补全：勾选 ${selected.size} 首，其中 ${plan.size} 首需要补全")
     }
 
     /** 就地写入专辑艺术家。全过程不改变文件长度，音频数据不受影响。 */
@@ -483,7 +485,12 @@ private fun AppRoot() {
                 plan.map { candidate ->
                     TagFixOutcome(
                         candidate.song,
-                        Mp3TagWriter.writeAlbumArtist(context, candidate.song.uri, candidate.target),
+                        TagSupport.writeAlbumArtist(
+                            context,
+                            candidate.song.uri,
+                            candidate.song.displayName,
+                            candidate.target,
+                        ),
                     )
                 }
             }
@@ -592,6 +599,7 @@ private fun AppRoot() {
                     onBatchDownloadSongs = { matchSongs(songs.filter { it.id in selectedIds }) },
                     // 按歌手名字在当前列表里的顺序处理，保持与界面一致的顺序
                     onBatchDownloadArtists = { matchArtists(artistGroups.filter { it.name in selectedArtists }.map { it.name }) },
+                    onTagFix = { planTagFix() },
                 )
 
                 AppTab.Settings -> MatchPage(
@@ -606,11 +614,6 @@ private fun AppRoot() {
                         overwrite = value
                         prefs.overwriteExisting = value
                     },
-                    tagCandidates = tagCandidates,
-                    tagOutcomes = tagOutcomes,
-                    tagWriting = tagWriting,
-                    onPlanTagFix = { planTagFix() },
-                    onApplyTagFix = { applyTagFix() },
                     checkResult = checkResult,
                     checking = checking,
                     onRunCheck = { runCheck() },
@@ -662,6 +665,19 @@ private fun AppRoot() {
                 )
             },
             onDismiss = { matchTarget = null },
+        )
+    }
+
+    if (tagCandidates != null || tagOutcomes.isNotEmpty()) {
+        TagFixDialog(
+            candidates = tagCandidates ?: emptyList(),
+            outcomes = tagOutcomes,
+            writing = tagWriting,
+            onConfirm = { applyTagFix() },
+            onDismiss = {
+                tagCandidates = null
+                tagOutcomes = emptyList()
+            },
         )
     }
 }

@@ -1,15 +1,41 @@
 package com.musictag.artistcover.data
 
 import android.content.Context
-import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.musictag.artistcover.model.SongItem
-import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+
+/** 支持的标签写入格式。 */
+object TagSupport {
+
+    private val EXTENSIONS = setOf("mp3", "flac")
+
+    fun supports(displayName: String): Boolean =
+        displayName.substringAfterLast('.', "").lowercase() in EXTENSIONS
+
+    /** 找出「专辑艺术家为空、但艺术家已知」的可写歌曲。 */
+    fun planAlbumArtistFixes(songs: List<SongItem>): List<TagFixCandidate> = songs
+        .filter { song ->
+            song.albumArtist.isNullOrBlank() &&
+                !song.artist.isNullOrBlank() &&
+                supports(song.displayName)
+        }
+        .map { song -> TagFixCandidate(song, song.artist!!.trim()) }
+
+    fun writeAlbumArtist(
+        context: Context,
+        uri: Uri,
+        displayName: String,
+        value: String,
+    ): TagWriteResult = when (displayName.substringAfterLast('.', "").lowercase()) {
+        "mp3" -> Mp3TagWriter.writeAlbumArtist(context, uri, value)
+        "flac" -> FlacTagWriter.writeAlbumArtist(context, uri, value)
+        else -> TagWriteResult.Skipped("暂不支持这种格式（目前支持 MP3 / FLAC）")
+    }
+}
 
 sealed interface TagWriteResult {
     /** 写入成功；[verified] 表示写完后回读确认过。 */
@@ -44,15 +70,6 @@ data class TagFixOutcome(val song: SongItem, val result: TagWriteResult)
 object Mp3TagWriter {
 
     private const val FRAME_ID = "TPE2"
-
-    /** 找出「专辑艺术家为空、但艺术家已知」的 MP3。 */
-    fun planAlbumArtistFixes(songs: List<SongItem>): List<TagFixCandidate> = songs
-        .filter { song ->
-            song.albumArtist.isNullOrBlank() &&
-                !song.artist.isNullOrBlank() &&
-                song.displayName.endsWith(".mp3", ignoreCase = true)
-        }
-        .map { song -> TagFixCandidate(song, song.artist!!.trim()) }
 
     fun writeAlbumArtist(context: Context, uri: Uri, value: String): TagWriteResult {
         val descriptor = try {
@@ -147,7 +164,7 @@ object Mp3TagWriter {
             writeLength = frame.size
         }
 
-        backupTag(context, uri, tag)
+        TagIo.backup(context, uri, tag)
 
         val payload = ByteBuffer.allocate(writeLength)
         payload.put(frame)
@@ -163,7 +180,7 @@ object Mp3TagWriter {
         }
         if (!written) return TagWriteResult.Failed("写入失败")
 
-        val verified = readBackAlbumArtist(context, uri)?.equals(value, ignoreCase = false) == true
+        val verified = TagIo.readBackAlbumArtist(context, uri) == value
         return TagWriteResult.Written(value, verified)
     }
 
@@ -191,39 +208,11 @@ object Mp3TagWriter {
         return frame
     }
 
-    /** 把原标签区留一份备份，出问题时可以比对恢复。 */
-    private fun backupTag(context: Context, uri: Uri, tag: ByteArray) {
-        runCatching {
-            val dir = File(context.filesDir, "tag_backup")
-            if (!dir.exists()) dir.mkdirs()
-            val name = uri.toString().hashCode().toString(16) + ".id3"
-            File(dir, name).writeBytes(tag)
-        }
-    }
-
-    private fun readBackAlbumArtist(context: Context, uri: Uri): String? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(context, uri)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?.trim()
-        } catch (_: Throwable) {
-            null
-        } finally {
-            runCatching { retriever.release() }
-        }
-    }
-
-    /** 从 [fileOffset] 处读入 [buffer]（写入位置由 buffer 自身的 position 决定）。 */
     private fun readAt(stream: FileInputStream, buffer: ByteBuffer, fileOffset: Long): Int =
-        stream.channel.read(buffer, fileOffset).let { if (it < 0) 0 else it }
+        TagIo.readAt(stream, buffer, fileOffset)
 
-    private fun writeAt(stream: FileOutputStream, buffer: ByteBuffer, offset: Long) {
-        var position = offset
-        while (buffer.hasRemaining()) {
-            position += stream.channel.write(buffer, position)
-        }
-    }
+    private fun writeAt(stream: FileOutputStream, buffer: ByteBuffer, offset: Long) =
+        TagIo.writeAt(stream, buffer, offset)
 
     private fun synchsafe(bytes: ByteArray, start: Int): Int =
         ((bytes[start].toInt() and 0x7F) shl 21) or
