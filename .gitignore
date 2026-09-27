@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+app/build/
+*.iml
+
+# 本地环境（含本机 SDK 路径，不应提交）
+local.properties
+
+# 签名密钥（千万不要提交）
+*.keystore
+*.jks
+release.keystore
+
+# IDE
+.idea/
+.vscode/
+*.hprof
+
+# 系统文件
+.DS_Store
+Thumbs.db

@@ -1,0 +1,404 @@
+package com.musictag.artistcover
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.documentfile.provider.DocumentFile
+import com.musictag.artistcover.data.AppLog
+import com.musictag.artistcover.data.ImageDownloader
+import com.musictag.artistcover.data.MatchEngine
+import com.musictag.artistcover.data.MetadataReader
+import com.musictag.artistcover.data.Prefs
+import com.musictag.artistcover.data.SavedFiles
+import com.musictag.artistcover.data.SingleMatchEngine
+import com.musictag.artistcover.data.SongCache
+import com.musictag.artistcover.data.SongScanner
+import com.musictag.artistcover.model.ArtistGroup
+import com.musictag.artistcover.model.MatchState
+import com.musictag.artistcover.model.MatchTarget
+import com.musictag.artistcover.model.Platform
+import com.musictag.artistcover.model.SongItem
+import com.musictag.artistcover.theme.MusicArtistTheme
+import com.musictag.artistcover.ui.MatchPage
+import com.musictag.artistcover.ui.SingleMatchSheet
+import com.musictag.artistcover.ui.SongPage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            MusicArtistTheme {
+                AppRoot()
+            }
+        }
+    }
+}
+
+private enum class AppTab(val labelRes: Int) {
+    Songs(R.string.tab_songs),
+    Settings(R.string.tab_match);
+
+    val icon: ImageVector
+        get() = when (this) {
+            Songs -> Icons.AutoMirrored.Filled.List
+            Settings -> Icons.Default.Settings
+        }
+}
+
+/** 「关于」里跳转的项目仓库。 */
+private const val REPO_URL = "https://github.com/Yuyaniel/music-artist-cover"
+
+@Composable
+private fun AppRoot() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val prefs = remember { Prefs(context) }
+    val engine = remember { SingleMatchEngine(context) }
+
+    var tab by remember { mutableStateOf(AppTab.Songs) }
+    var songTreeUri by remember { mutableStateOf(prefs.songTreeUri?.let(Uri::parse)) }
+    var outputTreeUri by remember { mutableStateOf(prefs.outputTreeUri?.let(Uri::parse)) }
+    var songFolderName by remember { mutableStateOf<String?>(null) }
+    var outputFolderName by remember { mutableStateOf<String?>(null) }
+    var songs by remember { mutableStateOf<List<SongItem>>(emptyList()) }
+    var cachedAt by remember { mutableStateOf<Long?>(null) }
+    var savedFiles by remember { mutableStateOf(SavedFiles.EMPTY) }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var platforms by remember { mutableStateOf(prefs.enabledPlatforms()) }
+    var overwrite by remember { mutableStateOf(prefs.overwriteExisting) }
+    var scanning by remember { mutableStateOf(false) }
+    var matching by remember { mutableStateOf(false) }
+    var progressDone by remember { mutableStateOf(0) }
+    var progressTotal by remember { mutableStateOf(0) }
+    var matchTarget by remember { mutableStateOf<MatchTarget?>(null) }
+
+    fun notify(message: String) {
+        scope.launch { snackbarHostState.showSnackbar(message) }
+    }
+
+    fun folderNameOf(uri: Uri): String? =
+        runCatching { DocumentFile.fromTreeUri(context, uri)?.name }.getOrNull() ?: uri.lastPathSegment
+
+    fun refreshSavedFiles() {
+        scope.launch {
+            val dir = withContext(Dispatchers.IO) { engine.resolveOutputDir(outputTreeUri) }
+            savedFiles = engine.loadSavedFiles(dir)
+        }
+    }
+
+    val scanFolder: (Uri, String?) -> Unit = { uri, name ->
+        scope.launch {
+            scanning = true
+            songFolderName = name ?: folderNameOf(uri)
+            AppLog.i("开始扫描歌曲文件夹：${songFolderName ?: uri.lastPathSegment}")
+            val items = withContext(Dispatchers.IO) {
+                SongScanner.scan(context, uri).map { doc ->
+                    val fileName = doc.name.orEmpty()
+                    val meta = MetadataReader.read(context, doc.uri, fileName)
+                    SongItem(
+                        id = doc.uri.toString(),
+                        uri = doc.uri,
+                        displayName = fileName,
+                        sizeBytes = doc.length(),
+                        title = meta.title,
+                        artist = meta.artist,
+                        artists = meta.artists,
+                        artistSource = meta.kind,
+                    )
+                }
+            }
+            songs = items
+            selectedIds = selectedIds.filter { id -> items.any { it.id == id } }.toSet()
+            scanning = false
+            if (items.isEmpty()) {
+                AppLog.w("该文件夹内没有找到支持的音频文件")
+            } else {
+                val now = System.currentTimeMillis()
+                cachedAt = now
+                withContext(Dispatchers.IO) { SongCache.save(context, uri.toString(), items) }
+                val artistCount = items.sumOf { it.artistList.size }
+                AppLog.i("扫描完成并写入缓存：共 ${items.size} 首，识别出 $artistCount 位歌手")
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        songTreeUri?.let { uri ->
+            songFolderName = withContext(Dispatchers.IO) { folderNameOf(uri) }
+            val cached = withContext(Dispatchers.IO) { SongCache.load(context, uri.toString()) }
+            if (cached != null && cached.songs.isNotEmpty()) {
+                // 先用缓存秒开，只有手动刷新才重新扫描
+                songs = cached.songs
+                cachedAt = cached.savedAt
+                AppLog.i("已加载扫描缓存：${cached.songs.size} 首（未重新扫描）")
+            } else {
+                scanFolder(uri, null)
+            }
+        }
+        outputTreeUri?.let { uri ->
+            outputFolderName = withContext(Dispatchers.IO) { folderNameOf(uri) }
+            refreshSavedFiles()
+        }
+    }
+
+    val songFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            prefs.songTreeUri = uri.toString()
+            songTreeUri = uri
+            cachedAt = null
+            scanFolder(uri, null)
+        }
+    }
+
+    val outputFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            prefs.outputTreeUri = uri.toString()
+            outputTreeUri = uri
+            outputFolderName = folderNameOf(uri)
+            AppLog.i("保存位置已设置为：${outputFolderName ?: uri.lastPathSegment}")
+            refreshSavedFiles()
+        }
+    }
+
+    /** 批量匹配；单条重试也复用这里（目标列表只有一首）。 */
+    fun matchSongs(target: List<SongItem>) {
+        val outUri = outputTreeUri
+        when {
+            target.isEmpty() -> notify(context.getString(R.string.need_selection))
+            outUri == null -> notify(context.getString(R.string.need_output))
+            matching -> Unit
+            else -> scope.launch {
+                val dir = withContext(Dispatchers.IO) { DocumentFile.fromTreeUri(context, outUri) }
+                if (dir == null || !dir.canWrite()) {
+                    AppLog.e("保存文件夹不可写，请重新选择")
+                    notify(context.getString(R.string.need_output))
+                    return@launch
+                }
+                matching = true
+                progressDone = 0
+                progressTotal = target.size
+                val artistCount = target.sumOf { it.artistList.size }
+                AppLog.i(
+                    "开始匹配 ${target.size} 首歌曲（含 $artistCount 个歌手条目），来源：${platforms.joinToString("、") { it.displayName }}" +
+                        if (overwrite) "，覆盖旧图" else "，保留旧图",
+                )
+                withContext(Dispatchers.IO) {
+                    MatchEngine(context).match(
+                        songs = target,
+                        platforms = platforms,
+                        outputDir = dir,
+                        overwrite = overwrite,
+                        onSongUpdated = { updated ->
+                            songs = songs.map { if (it.id == updated.id) updated else it }
+                        },
+                        onProgress = { done, total ->
+                            progressDone = done
+                            progressTotal = total
+                        },
+                    )
+                }
+                matching = false
+                val ids = target.map { it.id }.toSet()
+                val done = songs.count { it.id in ids && it.matchState == MatchState.DONE }
+                val skipped = songs.count { it.id in ids && it.matchState == MatchState.EXISTS }
+                val partial = songs.count { it.id in ids && it.matchState == MatchState.PARTIAL }
+                AppLog.i("匹配结束：新下载 $done 首，已存在 $skipped 首，部分成功 $partial 首")
+                refreshSavedFiles()
+                tab = AppTab.Settings
+            }
+        }
+    }
+
+    val artistGroups: List<ArtistGroup> = remember(songs, savedFiles) {
+        if (songs.isEmpty()) {
+            emptyList()
+        } else {
+            val counts = LinkedHashMap<String, Int>()
+            songs.forEach { song -> song.artistList.forEach { name -> counts[name] = (counts[name] ?: 0) + 1 } }
+            counts.entries
+                .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+                .map { entry ->
+                    val fileName = ImageDownloader.safeFileName(entry.key)
+                    val uri = savedFiles.uriOf(fileName)
+                    ArtistGroup(
+                        name = entry.key,
+                        songCount = entry.value,
+                        savedFileName = if (uri != null) fileName else null,
+                        savedUri = uri,
+                    )
+                }
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                AppTab.entries.forEach { item ->
+                    NavigationBarItem(
+                        selected = tab == item,
+                        onClick = { tab = item },
+                        icon = { Icon(item.icon, contentDescription = stringResource(item.labelRes)) },
+                        label = { Text(stringResource(item.labelRes)) },
+                    )
+                }
+            }
+        },
+    ) { innerPadding ->
+        Box(modifier = Modifier.padding(innerPadding)) {
+            when (tab) {
+                AppTab.Songs -> SongPage(
+                    folderName = songFolderName,
+                    cachedAt = cachedAt,
+                    isScanning = scanning,
+                    songs = songs,
+                    artistGroups = artistGroups,
+                    selectedIds = selectedIds,
+                    selectionMode = selectionMode,
+                    savedFiles = savedFiles,
+                    onToggleSelectionMode = {
+                        if (selectionMode) selectedIds = emptySet()
+                        selectionMode = !selectionMode
+                    },
+                    onPickFolder = { songFolderPicker.launch(null) },
+                    onRescan = { songTreeUri?.let { scanFolder(it, songFolderName) } },
+                    onToggle = { id ->
+                        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+                    },
+                    onSelectAll = { selectedIds = songs.map { it.id }.toSet() },
+                    onClearSelection = { selectedIds = emptySet() },
+                    onSingleMatch = { song ->
+                        matchTarget = MatchTarget(
+                            title = song.displayTitle,
+                            subtitle = song.artistList.joinToString(" / ")
+                                .ifBlank { context.getString(R.string.artist_unknown) },
+                            artists = song.artistList,
+                            songId = song.id,
+                        )
+                    },
+                    onArtistMatch = { group ->
+                        matchTarget = MatchTarget(
+                            title = group.name,
+                            subtitle = context.getString(R.string.artist_song_count, group.songCount),
+                            artists = listOf(group.name),
+                            songId = null,
+                            relatedSongs = songs.filter { group.name in it.artistList },
+                        )
+                    },
+                )
+
+                AppTab.Settings -> MatchPage(
+                    platforms = platforms,
+                    onTogglePlatform = { platform ->
+                        platforms = if (platform in platforms) platforms - platform else platforms + platform
+                        prefs.setEnabledPlatforms(platforms)
+                    },
+                    outputFolderName = outputFolderName,
+                    onPickOutput = { outputFolderPicker.launch(null) },
+                    overwrite = overwrite,
+                    onToggleOverwrite = { value ->
+                        overwrite = value
+                        prefs.overwriteExisting = value
+                    },
+                    selectedCount = selectedIds.size,
+                    matching = matching,
+                    progressDone = progressDone,
+                    progressTotal = progressTotal,
+                    results = songs.filter { it.matchState != MatchState.IDLE },
+                    appVersion = BuildConfig.VERSION_NAME,
+                    onStart = { matchSongs(songs.filter { it.id in selectedIds }) },
+                    onRetry = { song -> matchSongs(listOf(song)) },
+                    onOpenRepo = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(REPO_URL)),
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    matchTarget?.let { target ->
+        SingleMatchSheet(
+            target = target,
+            outputTreeUri = outputTreeUri,
+            overwrite = overwrite,
+            onSaved = { savedTarget, outcome ->
+                refreshSavedFiles()
+                savedTarget.songId?.let { songId ->
+                    songs = songs.map { song ->
+                        if (song.id != songId) {
+                            song
+                        } else {
+                            song.copy(
+                                matchState = outcome.state,
+                                matchedArtist = outcome.matchedArtist,
+                                platform = outcome.platform,
+                                savedName = outcome.savedName,
+                                error = outcome.error,
+                            )
+                        }
+                    }
+                }
+                notify(
+                    if (outcome.savedCount > 0) context.getString(R.string.save_done, outcome.savedCount)
+                    else context.getString(R.string.save_none),
+                )
+            },
+            onDismiss = { matchTarget = null },
+        )
+    }
+}

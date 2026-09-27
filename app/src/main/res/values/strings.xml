@@ -1,0 +1,103 @@
+<resources>
+    <string name="app_name">歌手图片匹配</string>
+
+    <string name="tab_songs">歌曲</string>
+    <string name="tab_match">设置</string>
+
+    <string name="songs_title">歌曲库</string>
+    <string name="match_title">设置</string>
+    <string name="log_title">运行日志</string>
+
+    <string name="section_about">关于</string>
+    <string name="section_batch">批量匹配</string>
+    <string name="about_app">应用</string>
+    <string name="about_version">版本</string>
+    <string name="about_author">作者</string>
+    <string name="about_repo_hint">源码、更新与问题反馈都在这里</string>
+    <string name="open_repo">打开项目仓库</string>
+
+    <string name="pick_song_folder">点按选择歌曲文件夹</string>
+    <string name="pick_output_folder">点按选择保存文件夹</string>
+    <string name="rescan">重新扫描</string>
+    <string name="clear_log">清空日志</string>
+
+    <string name="selected_summary">已选 %1$d 首 / 共 %2$d 首</string>
+    <string name="select_all">全选</string>
+    <string name="clear_selection">清空</string>
+
+    <string name="section_platforms">图片来源</string>
+    <string name="platforms_hint">按顺序依次尝试，失败自动切换到下一个平台</string>
+    <string name="section_output">保存位置</string>
+    <string name="start_match">一键匹配并下载</string>
+    <string name="matching">匹配中…</string>
+    <string name="progress_text">已完成 %1$d / %2$d</string>
+    <string name="section_results">匹配结果</string>
+    <string name="retry">重试</string>
+
+    <string name="empty_songs">还没有歌曲，先选择一个歌曲文件夹</string>
+    <string name="scanning">正在读取歌曲信息…</string>
+    <string name="no_songs_found">该文件夹内没有找到支持的音频文件</string>
+
+    <string name="state_idle">待匹配</string>
+    <string name="state_downloaded">已下载</string>
+    <string name="state_missing">未下载</string>
+    <string name="state_partial_download">部分下载</string>
+    <string name="state_unknown">无法判断</string>
+    <string name="view_songs">歌曲</string>
+    <string name="view_artists">歌手</string>
+    <string name="artists_summary">共 %1$d 位歌手 · 点按歌手即可匹配（不用一首首来）</string>
+    <string name="artist_song_count">共 %1$d 首歌</string>
+    <string name="scan_cached_at">扫描于 %1$s</string>
+    <string name="rescan_hint">重新扫描会重新读取全部歌曲信息，可能需要一会儿</string>
+    <string name="state_searching">搜索中</string>
+    <string name="state_done">已下载</string>
+    <string name="state_exists">已存在</string>
+    <string name="state_partial">部分成功</string>
+    <string name="state_not_found">未匹配</string>
+    <string name="state_failed">失败</string>
+
+    <string name="artist_from_tag">标签</string>
+    <string name="artist_from_name">文件名</string>
+    <string name="artist_unknown">未识别</string>
+    <string name="artist_count">%1$d 位歌手</string>
+
+    <string name="single_match">单曲匹配</string>
+    <string name="multi_select">多选</string>
+    <string name="multi_select_done">完成</string>
+    <string name="tap_to_match_hint">点按歌曲即可进行单曲匹配</string>
+    <string name="songs_summary">共 %1$d 首 · %2$s</string>
+    <string name="local_artwork">本地已保存的艺术图</string>
+    <string name="local_artwork_from_folder">读取自保存文件夹，用来确认这首歌下过没有</string>
+    <string name="not_downloaded">未下载</string>
+    <string name="reading_local">读取中…</string>
+    <string name="output_not_set_hint">尚未设置保存文件夹，无法读取本地图片</string>
+    <string name="platform_results">平台结果（选择后保存）</string>
+    <string name="platform_candidates">平台候选</string>
+    <string name="works_of_artist">参与的作品（%1$d）</string>
+    <string name="works_title">该歌手参与的作品</string>
+    <string name="no_artist_in_song">这首歌没有识别出歌手</string>
+    <string name="single_match_hint">可为这首歌单独选择平台并立即搜索，确认无误后再保存</string>
+    <string name="album_art">专辑封面</string>
+    <string name="overwrite_existing">覆盖已有文件</string>
+    <string name="overwrite_hint">开启后会替换保存文件夹中同名的旧图片；关闭则保留旧图</string>
+    <string name="existing_file">已有文件：%1$s</string>
+    <string name="will_overwrite">保存时将覆盖旧图</string>
+    <string name="will_skip">已存在，保存时跳过</string>
+    <string name="no_existing_file">该歌手在保存文件夹中还没有图片</string>
+    <string name="searching">搜索中…</string>
+    <string name="search_again">重新搜索</string>
+    <string name="save_images">保存图片</string>
+    <string name="saving">保存中…</string>
+    <string name="close">关闭</string>
+    <string name="matched_as">命中「%1$s」</string>
+    <string name="verified">名称已校准</string>
+    <string name="not_calibrated">名称与歌曲不一致</string>
+    <string name="source_platform">来源：%1$s</string>
+    <string name="candidate_others">其他候选（点按切换）</string>
+    <string name="no_output_selected">请先选择保存文件夹</string>
+    <string name="save_done">本次保存 %1$d 张图片</string>
+    <string name="save_none">没有可保存的图片</string>
+
+    <string name="need_selection">请先勾选要匹配的歌曲并选择保存文件夹</string>
+    <string name="need_output">请先选择保存文件夹</string>
+</resources>
