@@ -125,6 +125,17 @@ private fun AppRoot() {
         scope.launch { snackbarHostState.showSnackbar(message) }
     }
 
+    /** 保存结果提示：失败时把具体原因说出来，而不是笼统的「没有新文件」。 */
+    fun notifySaveOutcome(outcome: SaveOutcome) {
+        notify(
+            when {
+                outcome.savedCount > 0 -> context.getString(R.string.save_done, outcome.savedCount)
+                outcome.error != null -> outcome.error
+                else -> context.getString(R.string.save_none)
+            },
+        )
+    }
+
     fun folderNameOf(uri: Uri): String? =
         DocumentQuery.displayNameOf(context, uri) ?: uri.lastPathSegment
 
@@ -446,10 +457,7 @@ private fun AppRoot() {
                 }
             }
 
-            notify(
-                if (outcome.savedCount > 0) context.getString(R.string.save_done, outcome.savedCount)
-                else context.getString(R.string.save_none),
-            )
+            notifySaveOutcome(outcome)
         }
     }
 
@@ -602,10 +610,7 @@ private fun AppRoot() {
                         }
                     }
                 }
-                notify(
-                    if (outcome.savedCount > 0) context.getString(R.string.save_done, outcome.savedCount)
-                    else context.getString(R.string.save_none),
-                )
+                notifySaveOutcome(outcome)
             },
             onDismiss = { matchTarget = null },
         )

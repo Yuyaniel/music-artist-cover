@@ -140,6 +140,7 @@
     <string name="not_calibrated">名称与歌曲不一致</string>
     <string name="source_platform">来源：%1$s</string>
     <string name="candidate_others">其他候选（点按切换）</string>
+    <string name="long_press_save_hint">长按某张候选图 = 直接把这一张保存到本地</string>
     <string name="no_output_selected">请先选择保存文件夹</string>
     <string name="save_done">本次保存 %1$d 张图片</string>
     <string name="save_none">没有可保存的图片</string>

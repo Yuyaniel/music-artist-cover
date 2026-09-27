@@ -59,6 +59,10 @@ class SingleMatchEngine(private val context: Context) {
             }
         }
 
+    /** 保存后重读本地图片，让面板上的「已保存 / 未下载」立刻与现实一致。 */
+    suspend fun reloadLocal(artists: List<String>, treeUri: Uri): List<LocalArtistImage> =
+        loadLocalImages(artists, withContext(Dispatchers.IO) { SavedFiles.load(context, treeUri) })
+
     /** 在指定平台搜索每位歌手，返回候选列表。 */
     suspend fun search(queries: List<ArtistQuery>, platform: Platform, label: String): List<ArtistMatch> =
         withContext(Dispatchers.IO) {
@@ -165,12 +169,18 @@ class SingleMatchEngine(private val context: Context) {
                     savedCount++
                     anyNew = true
                     savedNames.add(result.fileName)
+                    AppLog.i("已保存 ${result.fileName}（${result.sizeBytes} 字节）")
                 }
 
-                is SaveResult.Exists -> savedNames.add(result.fileName)
+                is SaveResult.Exists -> {
+                    savedNames.add(result.fileName)
+                    AppLog.i("${result.fileName} 已存在，跳过")
+                }
+
                 is SaveResult.Failed -> {
                     failedArtists.add(match.artist)
                     lastError = result.reason
+                    AppLog.e("保存「${match.artist}」失败：${result.reason}")
                 }
             }
         }
@@ -197,6 +207,51 @@ class SingleMatchEngine(private val context: Context) {
                 else -> null
             },
         )
+    }
+
+    /**
+     * 手动保存指定下标的候选。
+     *
+     * 供「长按候选图直接存这一张」使用，所以只认传进来的 [index]，
+     * 不受当前选中项影响，也不再要求用户先去点选。
+     */
+    suspend fun saveCandidate(
+        outputTreeUri: Uri,
+        match: ArtistMatch,
+        index: Int,
+        overwrite: Boolean,
+    ): SaveOutcome = withContext(Dispatchers.IO) {
+        val candidate = match.candidates.getOrNull(index)
+            ?: return@withContext SaveOutcome(0, MatchState.FAILED, null, null, null, "候选不存在")
+
+        // 预览阶段可能没取到图，这里补一次
+        val data = candidate.bytes ?: try {
+            ImageDownloader.fetchBytes(http, candidate.hit).bytes
+        } catch (t: Throwable) {
+            return@withContext SaveOutcome(0, MatchState.FAILED, null, null, null, t.message ?: "图片下载失败")
+        }
+
+        AppLog.i(
+            "手动保存「${match.artist}」← ${candidate.hit.platform.displayName} / ${candidate.hit.name}",
+        )
+        // 文件名统一用歌曲里识别出的歌手名，与「已下载 / 未下载」检测口径一致
+        val fileName = ImageDownloader.safeFileName(match.artist)
+        when (val result = ImageDownloader.save(context, outputTreeUri, fileName, data, overwrite)) {
+            is SaveResult.Saved -> {
+                AppLog.i("已保存 ${result.fileName}（${result.sizeBytes} 字节）")
+                SaveOutcome(1, MatchState.DONE, candidate.hit.name, candidate.hit.platform, result.fileName, null)
+            }
+
+            is SaveResult.Exists -> {
+                AppLog.i("${result.fileName} 已存在，跳过")
+                SaveOutcome(0, MatchState.EXISTS, candidate.hit.name, candidate.hit.platform, result.fileName, null)
+            }
+
+            is SaveResult.Failed -> {
+                AppLog.e("保存「${match.artist}」失败：${result.reason}")
+                SaveOutcome(0, MatchState.FAILED, null, null, null, result.reason)
+            }
+        }
     }
 
     private companion object {

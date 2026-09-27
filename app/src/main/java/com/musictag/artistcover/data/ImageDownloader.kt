@@ -6,8 +6,8 @@ import com.musictag.artistcover.model.ArtistHit
 import com.musictag.artistcover.model.Platform
 
 sealed interface SaveResult {
-    /** 本次真实写盘成功。 */
-    data class Saved(val fileName: String) : SaveResult
+    /** 本次真实写盘成功；[sizeBytes] 是写完后回查到的实际字节数。 */
+    data class Saved(val fileName: String, val sizeBytes: Long = 0L) : SaveResult
 
     /** 目标目录已有同名文件且未开启覆盖。 */
     data class Exists(val fileName: String) : SaveResult
@@ -70,7 +70,9 @@ object ImageDownloader {
      * 写入图片。
      *
      * 覆盖策略：先删掉目录里所有同名的旧文件（含系统加过「(1)」后缀的），再新建；
-     * 若系统仍然改名，则改回标准名并清掉多余副本；连删除都失败时退化为原地截断重写。
+     * 若系统仍然改名，则改回标准名并清掉多余副本；删不掉旧文件时退化为原地截断重写。
+     *
+     * 无论走哪条路径，最后都必须用 [verifyOnDisk] 回查目录确认文件真的在，才敢报成功。
      */
     fun save(
         context: Context,
@@ -79,30 +81,60 @@ object ImageDownloader {
         bytes: ByteArray,
         overwrite: Boolean,
     ): SaveResult {
-        val key = canonicalFileName(fileName)
-        val existing = findExisting(context, treeUri, key)
-        val parent = DocumentQuery.rootDocumentUri(treeUri)
+        if (bytes.isEmpty()) return SaveResult.Failed("图片数据为空")
 
-        if (existing.isEmpty()) {
-            parent ?: return SaveResult.Failed("保存目录不可用")
-            return createAndWrite(context, treeUri, parent, fileName, bytes)
+        val key = canonicalFileName(fileName)
+        val parent = DocumentQuery.rootDocumentUri(treeUri)
+            ?: return SaveResult.Failed("保存目录不可用，请重新选择保存文件夹")
+        val existing = findExisting(context, treeUri, key)
+
+        // 已有真实文件（非 0 字节）且不允许覆盖：跳过
+        if (!overwrite && existing.any { DocumentQuery.sizeOf(context, it) > 0L }) {
+            return SaveResult.Exists(fileName)
         }
-        if (!overwrite) return SaveResult.Exists(fileName)
 
         var allDeleted = true
         existing.forEach { uri -> if (!DocumentQuery.delete(context, uri)) allDeleted = false }
-        if (allDeleted && parent != null) {
-            val created = createAndWrite(context, treeUri, parent, fileName, bytes)
-            if (created is SaveResult.Saved) return created
+
+        if (allDeleted) {
+            // 旧文件已清干净，直接新建。失败就如实报失败——
+            // 绝不能再退化去写那些刚被删掉的 Uri，否则 provider 可能「写成功」却
+            // 不产出任何文件，界面显示已下载、文件夹里却什么都没有。
+            return createAndWrite(context, treeUri, parent, fileName, bytes)
         }
 
-        // 删除失败或创建失败：退化为原地覆盖
-        val target = findExisting(context, treeUri, key).firstOrNull() ?: existing.first()
-        return if (writeInto(context, target, bytes)) {
-            SaveResult.Saved(fileName)
-        } else {
-            SaveResult.Failed("无法覆盖旧文件 $fileName")
+        // 有旧文件删不掉：原地覆盖它（这个 Uri 确实还活着）
+        val target = findExisting(context, treeUri, key).firstOrNull()
+            ?: return SaveResult.Failed("无法清理同名旧文件 $fileName")
+        if (!writeInto(context, target, bytes)) return SaveResult.Failed("写入失败：$fileName")
+        return verifyOnDisk(context, treeUri, key, fileName, target)
+    }
+
+    /**
+     * 写完回查：必须同时满足「文件确实出现在保存目录里」和「大小大于 0」才算成功。
+     *
+     * 之前只看「输出流没抛异常」就报 [SaveResult.Saved]：一旦 provider 静默失败
+     * （或对着刚删除的 Uri 拿到了流），就会谎报成功——界面显示已下载、文件夹里却什么都没有。
+     */
+    private fun verifyOnDisk(
+        context: Context,
+        treeUri: Uri,
+        key: String,
+        fileName: String,
+        fallback: Uri? = null,
+    ): SaveResult {
+        // provider 偶尔会有极短的可见性延迟，查不到时稍等再查一次
+        repeat(2) { attempt ->
+            val inFolder = findExisting(context, treeUri, key).firstOrNull()
+            val size = when {
+                inFolder != null -> DocumentQuery.sizeOf(context, inFolder)
+                fallback != null -> DocumentQuery.sizeOf(context, fallback)
+                else -> 0L
+            }
+            if (inFolder != null && size > 0L) return SaveResult.Saved(fileName, size)
+            if (attempt == 0) runCatching { Thread.sleep(150) }
         }
+        return SaveResult.Failed("$fileName 未出现在保存文件夹里（保存目录可能已失效，请重新选择）")
     }
 
     /** 命中一次：下载 + 保存。文件名用歌曲里识别出的歌手名，保证与状态检测一致。 */
@@ -145,14 +177,14 @@ object ImageDownloader {
             return SaveResult.Failed("写入失败：$fileName")
         }
 
+        val key = canonicalFileName(fileName)
         val actual = DocumentQuery.displayNameOf(context, created)
-        if (actual != null && actual != fileName) {
+        if (actual != null && canonicalFileName(actual) != key) {
             // 系统给新文件加了「(1)」：改回标准名，并清掉其余同名副本
             DocumentQuery.rename(context, created, fileName)
-            removeOthers(context, treeUri, canonicalFileName(fileName), created)
+            removeOthers(context, treeUri, key, created)
         }
-        // 状态检测按归一化文件名比对，即使改名失败也能对上
-        return SaveResult.Saved(fileName)
+        return verifyOnDisk(context, treeUri, key, fileName, created)
     }
 
     /** 目录里所有「同一个歌手」的文件（含系统加过后缀的），一次查询拿全。 */

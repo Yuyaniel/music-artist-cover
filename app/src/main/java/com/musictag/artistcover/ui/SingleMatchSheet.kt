@@ -4,7 +4,7 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -122,13 +122,29 @@ fun SingleMatchSheet(
         }
     }
 
-    /** 只保存某一位歌手，保存完不关面板。 */
+    /** 只保存某一位歌手（当前选中的候选），保存完不关面板。 */
     fun runSaveOne(artist: String) {
         val treeUri = outputTreeUri ?: return
         val match = matches.firstOrNull { it.artist == artist } ?: return
         scope.launch {
             savingArtist = artist
             val outcome = engine.save(treeUri, listOf(match), overwrite)
+            // 存完立刻重读本地图片，让「已保存 / 未下载」与文件夹保持一致
+            locals = engine.reloadLocal(target.artists, treeUri)
+            savingArtist = null
+            if (outcome.savedName != null) savedArtists = savedArtists + artist
+            onArtistSaved(target, outcome)
+        }
+    }
+
+    /** 长按某个候选图：直接把手按的那一张存下来，不必先点选。 */
+    fun runSaveCandidate(artist: String, index: Int) {
+        val treeUri = outputTreeUri ?: return
+        val match = matches.firstOrNull { it.artist == artist } ?: return
+        scope.launch {
+            savingArtist = artist
+            val outcome = engine.saveCandidate(treeUri, match, index, overwrite)
+            locals = engine.reloadLocal(target.artists, treeUri)
             savingArtist = null
             if (outcome.savedName != null) savedArtists = savedArtists + artist
             onArtistSaved(target, outcome)
@@ -140,6 +156,8 @@ fun SingleMatchSheet(
         scope.launch {
             saving = true
             val outcome = engine.save(treeUri, matches, overwrite)
+            if (outcome.savedName != null) savedArtists = savedArtists + target.artists
+            locals = engine.reloadLocal(target.artists, treeUri)
             saving = false
             onSaved(target, outcome)
             onDismiss()
@@ -302,6 +320,7 @@ fun SingleMatchSheet(
                         onCancelEdit = { editingIndex = -1 },
                         onConfirmEdit = { confirmRename() },
                         onSelect = { candidateIndex -> selectCandidate(match.artist, candidateIndex) },
+                        onLongPressCandidate = { candidateIndex -> runSaveCandidate(match.artist, candidateIndex) },
                     )
                 }
             }
@@ -421,6 +440,7 @@ private fun ArtistMatchCard(
     onCancelEdit: () -> Unit,
     onConfirmEdit: () -> Unit,
     onSelect: (Int) -> Unit,
+    onLongPressCandidate: (Int) -> Unit,
 ) {
     val selected = match.selectedCandidate
 
@@ -533,7 +553,12 @@ private fun ArtistMatchCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 match.candidates.forEachIndexed { index, candidate ->
-                    Box(modifier = Modifier.clickable { onSelect(index) }) {
+                    Box(
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onSelect(index) },
+                            onLongClick = { onLongPressCandidate(index) },
+                        ),
+                    ) {
                         PreviewThumb(
                             bitmap = candidate.preview,
                             size = RESULT_THUMB,
@@ -543,6 +568,11 @@ private fun ArtistMatchCard(
                     }
                 }
             }
+            Text(
+                text = stringResource(R.string.long_press_save_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = FaintText,
+            )
         }
 
         // 多歌手时才出现的单独保存按钮
