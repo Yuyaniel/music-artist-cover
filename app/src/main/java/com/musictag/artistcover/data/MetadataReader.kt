@@ -64,12 +64,23 @@ object MetadataReader {
         )
     }
 
+    /** 成对的包裹符号，例如「（周杰伦）」。 */
+    private val BRACKET_PAIRS = listOf(
+        '（' to '）',
+        '(' to ')',
+        '「' to '」',
+        '《' to '》',
+        '【' to '】',
+        '"' to '"',
+        '\'' to '\'',
+    )
+
     /** 把「郭静/韦礼安」这类字符串拆成独立的歌手名，去重并保持顺序。 */
     fun splitArtists(raw: String): List<String> {
         val parts = raw
             .split(FEAT_SPLITTER)
             .flatMap { it.split(ARTIST_SPLITTER) }
-            .map { it.trim().trim('（', '）', '(', ')', '"', '\'', '「', '」') }
+            .map { stripWrappingBrackets(it) }
             .filter { it.isNotBlank() }
 
         val seen = LinkedHashSet<String>()
@@ -82,6 +93,27 @@ object MetadataReader {
         }
         // 拆分没有意义时退回原串（例如名字里本来带斜杠的作品名被误当作歌手）
         return if (seen.isEmpty()) listOfNotNull(raw.trim().takeIf { it.isNotBlank() }) else seen.toList()
+    }
+
+    /**
+     * 只剥掉**成对包裹**在首尾的括号。
+     *
+     * 这里不能用 `trim('(', ')')`：那个 API 会把两端的任意一个字符都削掉，
+     * 于是「xxx(xx)」会被截成「xxx(xx」，存出来的文件名也就成了「xxx(xx.jpg」。
+     */
+    private fun stripWrappingBrackets(text: String): String {
+        var value = text.trim()
+        var changed = true
+        while (changed && value.length >= 2) {
+            changed = false
+            for ((open, close) in BRACKET_PAIRS) {
+                if (value.first() == open && value.last() == close) {
+                    value = value.substring(1, value.length - 1).trim()
+                    changed = true
+                }
+            }
+        }
+        return value
     }
 
     private fun readTags(context: Context, uri: Uri): Pair<String?, String?> {

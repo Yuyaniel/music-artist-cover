@@ -23,12 +23,21 @@ object SongCache {
 
     private const val FILE_NAME = "song_cache.json"
 
+    /**
+     * 缓存格式版本。
+     *
+     * 只要歌手解析规则或字段含义变了就 +1，旧缓存会被判为失效、自动重扫一次，
+     * 免得用户拿着按旧规则解析出来的歌手名继续匹配。
+     */
+    private const val CACHE_VERSION = 2
+
     fun load(context: Context, treeUri: String?): CachedSongs? {
         if (treeUri.isNullOrBlank()) return null
         val file = File(context.filesDir, FILE_NAME)
         if (!file.exists()) return null
         return try {
             val root = JSONObject(file.readText())
+            if (root.optInt("version", 0) != CACHE_VERSION) return null
             if (root.optString("tree") != treeUri) return null
             val array = root.optJSONArray("songs") ?: return null
             val songs = (0 until array.length()).mapNotNull { parseSong(array.optJSONObject(it)) }
@@ -43,6 +52,7 @@ object SongCache {
             val array = JSONArray()
             songs.forEach { song -> array.put(toJson(song)) }
             val root = JSONObject()
+                .put("version", CACHE_VERSION)
                 .put("tree", treeUri)
                 .put("savedAt", System.currentTimeMillis())
                 .put("songs", array)
