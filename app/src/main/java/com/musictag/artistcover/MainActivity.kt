@@ -346,7 +346,8 @@ private fun AppRoot() {
                     onToggle = { id ->
                         selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
                     },
-                    onSelectAll = { selectedIds = songs.map { it.id }.toSet() },
+                    // 全选只作用于当前可见（可能被搜索过滤过）的歌曲
+                    onSelectAll = { visible -> selectedIds = selectedIds + visible.map { it.id } },
                     onClearSelection = { selectedIds = emptySet() },
                     onSingleMatch = { song ->
                         matchTarget = MatchTarget(

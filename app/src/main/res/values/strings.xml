@@ -19,6 +19,14 @@
     <string name="pick_song_folder">点按选择歌曲文件夹</string>
     <string name="pick_output_folder">点按选择保存文件夹</string>
     <string name="rescan">重新扫描</string>
+    <string name="search">搜索</string>
+    <string name="search_close">关闭搜索</string>
+    <string name="search_hint_songs">搜索歌名或歌手</string>
+    <string name="search_hint_artists">搜索歌手</string>
+    <string name="back_to_top">返回顶部</string>
+    <string name="no_search_result">没有找到匹配的内容</string>
+    <string name="found_songs">找到 %1$d 首</string>
+    <string name="found_artists">找到 %1$d 位歌手</string>
     <string name="clear_log">清空日志</string>
 
     <string name="selected_summary">已选 %1$d 首 / 共 %2$d 首</string>
