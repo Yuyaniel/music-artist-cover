@@ -10,6 +10,15 @@ import com.musictag.artistcover.model.Platform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * 一次搜索请求。
+ *
+ * [original] 是歌曲里识别出的歌手名，用来决定保存的文件名与本地图片查找；
+ * [searchName] 是实际发给平台的词——用户手动改名后两者会不同，
+ * 但文件仍然按 original 命名，这样「已下载 / 未下载」检测才不会失准。
+ */
+data class ArtistQuery(val original: String, val searchName: String)
+
 /** 一次保存的结果，交给调用方决定怎么回写界面。 */
 data class SaveOutcome(
     val savedCount: Int,
@@ -51,15 +60,15 @@ class SingleMatchEngine(private val context: Context) {
         }
 
     /** 在指定平台搜索每位歌手，返回候选列表。 */
-    suspend fun search(artists: List<String>, platform: Platform, label: String): List<ArtistMatch> =
+    suspend fun search(queries: List<ArtistQuery>, platform: Platform, label: String): List<ArtistMatch> =
         withContext(Dispatchers.IO) {
-            if (artists.isEmpty()) return@withContext emptyList()
+            if (queries.isEmpty()) return@withContext emptyList()
             val source = SourceRegistry.sourceOf(platform)
-            val matches = artists.map { artist ->
+            val matches = queries.map { query ->
                 if (source == null) {
-                    ArtistMatch(artist = artist, error = "平台不可用")
+                    ArtistMatch(artist = query.original, searchName = query.searchName, error = "平台不可用")
                 } else {
-                    searchOne(artist, source)
+                    searchOne(query, source)
                 }
             }
             AppLog.i(
@@ -69,15 +78,34 @@ class SingleMatchEngine(private val context: Context) {
             matches
         }
 
-    private fun searchOne(artist: String, source: ArtistImageSource): ArtistMatch {
+    /** 单独重搜一位歌手（手动改名后用）。 */
+    suspend fun searchOne(query: ArtistQuery, platform: Platform): ArtistMatch = withContext(Dispatchers.IO) {
+        val source = SourceRegistry.sourceOf(platform)
+        if (source == null) {
+            ArtistMatch(artist = query.original, searchName = query.searchName, error = "平台不可用")
+        } else {
+            searchOne(query, source)
+        }
+    }
+
+    private fun searchOne(query: ArtistQuery, source: ArtistImageSource): ArtistMatch {
+        val keyword = query.searchName
         val hits = try {
-            source.searchCandidates(artist, http, candidateLimit)
+            source.searchCandidates(keyword, http, candidateLimit)
         } catch (t: Throwable) {
-            return ArtistMatch(artist = artist, error = t.message ?: t.javaClass.simpleName)
+            return ArtistMatch(
+                artist = query.original,
+                searchName = keyword,
+                error = t.message ?: t.javaClass.simpleName,
+            )
         }
 
         if (hits.isEmpty()) {
-            return ArtistMatch(artist = artist, error = "${source.platform.displayName} 未找到此歌手")
+            return ArtistMatch(
+                artist = query.original,
+                searchName = keyword,
+                error = "${source.platform.displayName} 未找到「$keyword」",
+            )
         }
 
         val candidates = hits.map { hit ->
@@ -88,7 +116,8 @@ class SingleMatchEngine(private val context: Context) {
             }
             ArtistCandidate(
                 hit = hit,
-                exact = NameMatcher.matches(artist, hit.name, hit.aliases),
+                // 校准是跟「实际搜索词」比：用户改名后要跟新名字对齐
+                exact = NameMatcher.matches(keyword, hit.name, hit.aliases),
                 preview = fetched?.let { ArtworkCache.decode(it.bytes, previewSize) },
                 bytes = fetched?.bytes,
             )
@@ -100,7 +129,8 @@ class SingleMatchEngine(private val context: Context) {
             ?: candidates.indexOfFirst { it.bytes != null }
 
         return ArtistMatch(
-            artist = artist,
+            artist = query.original,
+            searchName = keyword,
             candidates = candidates,
             selected = if (defaultIndex >= 0) defaultIndex else 0,
             error = if (candidates.none { it.bytes != null }) "候选图片均下载失败" else null,

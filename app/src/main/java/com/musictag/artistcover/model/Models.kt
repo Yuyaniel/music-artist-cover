@@ -69,12 +69,18 @@ class ArtistCandidate(
 
 /** 单次匹配中，一位歌手的候选列表。 */
 data class ArtistMatch(
+    /** 歌曲里识别出的原始歌手名：决定保存的文件名与本地图片查找口径。 */
     val artist: String,
+    /** 真正发给平台的搜索词；用户手动改名后与 artist 不同。 */
+    val searchName: String = artist,
     val candidates: List<ArtistCandidate> = emptyList(),
     /** 当前选中的候选下标。 */
     val selected: Int = 0,
     val error: String? = null,
 ) {
+    /** 是否被手动改过名。 */
+    val renamed: Boolean get() = searchName != artist
+
     val selectedCandidate: ArtistCandidate? get() = candidates.getOrNull(selected)
 
     val hasImage: Boolean get() = selectedCandidate?.bytes != null

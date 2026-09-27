@@ -26,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.musictag.artistcover.R
+import com.musictag.artistcover.data.ArtistQuery
 import com.musictag.artistcover.data.SaveOutcome
 import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.SingleMatchEngine
@@ -59,6 +61,7 @@ import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
 import com.musictag.artistcover.theme.ErrorColor
 import com.musictag.artistcover.theme.FaintText
+import com.musictag.artistcover.theme.InfoColor
 import com.musictag.artistcover.theme.MutedText
 import com.musictag.artistcover.theme.SuccessColor
 import kotlinx.coroutines.launch
@@ -70,8 +73,8 @@ private val RESULT_THUMB = 88.dp
 /**
  * 匹配面板（歌曲 / 歌手共用）。
  *
- * 主体是目标歌手在保存文件夹里**已经下载过的图片**（判断下过没有、下的是什么），
- * 下面是所选平台返回的候选大图，由用户挑选后决定是否保存。
+ * 主体是目标歌手在保存文件夹里**已经下载过的图片**，下面是合并在一起的
+ * 「平台切换 + 操作按钮 + 候选结果」，每位歌手可手动改名后重新搜索。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,11 +99,19 @@ fun SingleMatchSheet(
     var readingLocal by remember(target) { mutableStateOf(false) }
     // 歌手视图里可切换到「该歌手参与的作品」
     var showSongs by remember(target) { mutableStateOf(false) }
+    // 手动改名的搜索词，与 target.artists 下标对齐
+    var searchNames by remember(target) { mutableStateOf(target.artists) }
+    var editingIndex by remember(target) { mutableStateOf(-1) }
+    var editText by remember(target) { mutableStateOf("") }
+
+    fun queries(): List<ArtistQuery> = target.artists.mapIndexed { index, artist ->
+        ArtistQuery(artist, searchNames.getOrElse(index) { artist })
+    }
 
     fun runSearch() {
         scope.launch {
             searching = true
-            matches = engine.search(target.artists, platform, target.title)
+            matches = engine.search(queries(), platform, target.title)
             searching = false
         }
     }
@@ -118,6 +129,21 @@ fun SingleMatchSheet(
 
     fun selectCandidate(artist: String, index: Int) {
         matches = matches.map { if (it.artist == artist) it.copy(selected = index) else it }
+    }
+
+    /** 只重搜被改名的那一位，其它歌手的结果不动。 */
+    fun confirmRename() {
+        val index = editingIndex
+        val newName = editText.trim()
+        if (index < 0 || index >= target.artists.size || newName.isEmpty()) return
+        editingIndex = -1
+        searchNames = searchNames.toMutableList().also { it[index] = newName }
+        scope.launch {
+            searching = true
+            val updated = engine.searchOne(ArtistQuery(target.artists[index], newName), platform)
+            matches = matches.toMutableList().also { if (index < it.size) it[index] = updated }
+            searching = false
+        }
     }
 
     // 读取保存文件夹里已有的图片（索引已由外层一次查好，这里只解码缩略图）
@@ -166,104 +192,88 @@ fun SingleMatchSheet(
                     TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
                 }
             } else {
+                SectionCard(
+                    title = stringResource(R.string.local_artwork),
+                    subtitle = stringResource(R.string.local_artwork_from_folder),
+                ) {
+                    LocalImages(
+                        artists = target.artists,
+                        locals = locals,
+                        reading = readingLocal,
+                        outputReady = outputTreeUri != null,
+                    )
+                }
 
-            SectionCard(
-                title = stringResource(R.string.local_artwork),
-                subtitle = stringResource(R.string.local_artwork_from_folder),
-            ) {
-                LocalImages(
-                    artists = target.artists,
-                    locals = locals,
-                    reading = readingLocal,
-                    outputReady = outputTreeUri != null,
-                )
-            }
+                // 平台切换 + 操作按钮 + 候选结果，合并在一张卡片里
+                SectionCard(
+                    title = stringResource(R.string.platform_results),
+                    subtitle = stringResource(R.string.platform_results_hint),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Platform.entries.forEach { item ->
+                            Box(modifier = Modifier.weight(1f)) {
+                                FilterChip(
+                                    selected = platform == item,
+                                    onClick = { if (platform != item) platform = item },
+                                    label = {
+                                        Text(
+                                            text = item.displayName,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
 
-            SectionCard(title = stringResource(R.string.section_platforms)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Platform.entries.forEach { item ->
-                        Box(modifier = Modifier.weight(1f)) {
-                            FilterChip(
-                                selected = platform == item,
-                                onClick = { if (platform != item) platform = item },
-                                label = {
-                                    Text(
-                                        text = item.displayName,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                modifier = Modifier.fillMaxWidth(),
+                    if (searching) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = stringResource(R.string.searching),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedText,
                             )
                         }
                     }
-                }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { runSearch() }, enabled = !searching && !saving) {
-                    Text(stringResource(R.string.search_again))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = { runSearch() }, enabled = !searching && !saving) {
+                            Text(stringResource(R.string.search_again))
+                        }
+                        Button(
+                            onClick = { runSave() },
+                            enabled = !saving && !searching && outputTreeUri != null && matches.any { it.hasImage },
+                        ) {
+                            Text(if (saving) stringResource(R.string.saving) else stringResource(R.string.save_images))
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+                    }
                 }
-                Button(
-                    onClick = { runSave() },
-                    enabled = !saving && !searching && outputTreeUri != null && matches.any { it.hasImage },
-                ) {
-                    Text(if (saving) stringResource(R.string.saving) else stringResource(R.string.save_images))
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
-            }
 
-            if (searching) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = stringResource(R.string.searching),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedText,
+                matches.forEachIndexed { index, match ->
+                    ArtistMatchCard(
+                        match = match,
+                        isEditing = editingIndex == index,
+                        editText = editText,
+                        onEditTextChange = { editText = it },
+                        onStartEdit = {
+                            editingIndex = index
+                            editText = searchNames.getOrElse(index) { match.artist }
+                        },
+                        onCancelEdit = { editingIndex = -1 },
+                        onConfirmEdit = { confirmRename() },
+                        onSelect = { candidateIndex -> selectCandidate(match.artist, candidateIndex) },
                     )
                 }
             }
-
-            if (matches.isNotEmpty()) {
-                Text(
-                    text = stringResource(R.string.platform_results),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
-
-            matches.forEach { match ->
-                ArtistMatchCard(
-                    match = match,
-                    onSelect = { index -> selectCandidate(match.artist, index) },
-                )
-            }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WorkRow(song: SongItem) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Artwork(song = song, size = 40.dp, shape = 8.dp)
-        Spacer(modifier = Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = song.displayTitle,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = formatSize(song.sizeBytes),
-                style = MaterialTheme.typography.labelSmall,
-                color = FaintText,
-            )
         }
     }
 }
@@ -366,28 +376,76 @@ private fun LocalImages(
 }
 
 @Composable
-private fun ArtistMatchCard(match: ArtistMatch, onSelect: (Int) -> Unit) {
+private fun ArtistMatchCard(
+    match: ArtistMatch,
+    isEditing: Boolean,
+    editText: String,
+    onEditTextChange: (String) -> Unit,
+    onStartEdit: () -> Unit,
+    onCancelEdit: () -> Unit,
+    onConfirmEdit: () -> Unit,
+    onSelect: (Int) -> Unit,
+) {
     val selected = match.selectedCandidate
 
     SectionCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = match.artist, style = MaterialTheme.typography.titleMedium)
-            if (match.hasExact) {
-                Text(
-                    text = stringResource(R.string.verified),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SuccessColor,
+        if (isEditing) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = editText,
+                    onValueChange = onEditTextChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.artist_name)) },
+                    singleLine = true,
                 )
-            } else if (match.candidates.isNotEmpty()) {
-                Text(
-                    text = stringResource(R.string.not_calibrated),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = ErrorColor,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onCancelEdit) { Text(stringResource(R.string.cancel)) }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = onConfirmEdit, enabled = editText.isNotBlank()) {
+                        Text(stringResource(R.string.search))
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = match.artist,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (match.renamed) {
+                        Text(
+                            text = stringResource(R.string.searching_as, match.searchName),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InfoColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (match.hasExact) {
+                    Text(
+                        text = stringResource(R.string.verified),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SuccessColor,
+                    )
+                } else if (match.candidates.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.not_calibrated),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ErrorColor,
+                    )
+                }
+                TextButton(onClick = onStartEdit) { Text(stringResource(R.string.edit_artist)) }
             }
         }
 
@@ -449,6 +507,30 @@ private fun ArtistMatchCard(match: ArtistMatch, onSelect: (Int) -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun WorkRow(song: SongItem) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Artwork(song = song, size = 40.dp, shape = 8.dp)
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.displayTitle,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = formatSize(song.sizeBytes),
+                style = MaterialTheme.typography.labelSmall,
+                color = FaintText,
+            )
         }
     }
 }
