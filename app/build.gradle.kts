@@ -1,7 +1,3 @@
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -17,9 +13,10 @@ android {
         applicationId = "com.musictag.artistcover"
         minSdk = 26
         targetSdk = 35
-        // 版本号按构建时间自增，便于区分每次产出的 APK。
+        // versionCode 用秒级时间戳单调递增，保证任何一次构建都能覆盖安装；
+        // versionName 给用户看的，保持干净的语义化版本。
         versionCode = (System.currentTimeMillis() / 1000L).toInt()
-        versionName = "1.0.0+" + SimpleDateFormat("MMddHHmm", Locale.US).format(Date())
+        versionName = "1.0.0"
     }
 
     buildTypes {
