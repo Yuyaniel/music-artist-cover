@@ -54,6 +54,7 @@ import com.musictag.artistcover.data.NameMatcher
 import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.downloadStateOf
 import com.musictag.artistcover.model.ArtistGroup
+import com.musictag.artistcover.model.DownloadState
 import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
 import com.musictag.artistcover.theme.FaintText
@@ -126,7 +127,7 @@ fun SongPage(
     }
 
     val keyword = NameMatcher.normalize(query)
-    val visibleSongs = remember(songs, keyword, songSort) {
+    val visibleSongs = remember(songs, keyword, songSort, savedFiles) {
         val base = if (keyword.isEmpty()) {
             songs
         } else {
@@ -137,6 +138,11 @@ fun SongPage(
         }
         // addedAt 为 0（拿不到修改时间）的一律排到最后
         when (songSort) {
+            SongSort.MISSING_FIRST -> base.sortedWith(
+                compareBy<SongItem> { downloadStateOf(it.artistList, savedFiles) == DownloadState.DOWNLOADED }
+                    .thenByDescending { it.addedAt },
+            )
+
             SongSort.ADDED_DESC -> base.sortedWith(
                 compareBy<SongItem> { it.addedAt == 0L }.thenByDescending { it.addedAt },
             )
@@ -153,6 +159,11 @@ fun SongPage(
             artistGroups.filter { NameMatcher.normalize(it.name).contains(keyword) }
         }
         when (artistSort) {
+            ArtistSort.MISSING_FIRST -> base.sortedWith(
+                compareBy<ArtistGroup> { it.downloadState == DownloadState.DOWNLOADED }
+                    .thenByDescending { it.songCount },
+            )
+
             ArtistSort.COUNT_DESC -> base.sortedWith(
                 compareByDescending<ArtistGroup> { it.songCount }.thenBy { it.name },
             )

@@ -26,6 +26,7 @@
     <string name="back_to_top">返回顶部</string>
     <string name="no_search_result">没有找到匹配的内容</string>
     <string name="sort">排序方式</string>
+    <string name="sort_missing_first">未下载在前</string>
     <string name="sort_added_desc">最新在前</string>
     <string name="sort_added_asc">最早在前</string>
     <string name="sort_count_desc">作品最多</string>
