@@ -41,7 +41,11 @@ import com.musictag.artistcover.data.LibraryCheckResult
 import com.musictag.artistcover.data.LibraryChecker
 import com.musictag.artistcover.data.MatchEngine
 import com.musictag.artistcover.data.MetadataReader
+import com.musictag.artistcover.data.Mp3TagWriter
 import com.musictag.artistcover.data.NameMatcher
+import com.musictag.artistcover.data.TagFixCandidate
+import com.musictag.artistcover.data.TagFixOutcome
+import com.musictag.artistcover.data.TagWriteResult
 import com.musictag.artistcover.data.Prefs
 import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.SongCache
@@ -117,6 +121,9 @@ private fun AppRoot() {
     var artistSort by remember { mutableStateOf(ArtistSort.from(prefs.artistSort)) }
     var checkResult by remember { mutableStateOf<LibraryCheckResult?>(null) }
     var checking by remember { mutableStateOf(false) }
+    var tagCandidates by remember { mutableStateOf<List<TagFixCandidate>?>(null) }
+    var tagOutcomes by remember { mutableStateOf<List<TagFixOutcome>>(emptyList()) }
+    var tagWriting by remember { mutableStateOf(false) }
 
     fun notify(message: String) {
         scope.launch { snackbarHostState.showSnackbar(message) }
@@ -167,6 +174,7 @@ private fun AppRoot() {
                         title = meta.title,
                         artist = meta.artist,
                         artists = meta.artists,
+                        albumArtist = meta.albumArtist,
                         artistSource = meta.kind,
                     )
                 }
@@ -411,6 +419,47 @@ private fun AppRoot() {
         }
     }
 
+    /** 扫描专辑艺术家为空的 MP3。 */
+    fun planTagFix() {
+        if (songs.isEmpty()) {
+            notify(context.getString(R.string.need_songs_first))
+            return
+        }
+        val plan = Mp3TagWriter.planAlbumArtistFixes(songs)
+        tagCandidates = plan
+        tagOutcomes = emptyList()
+        AppLog.i("专辑艺术家补全：找到 ${plan.size} 首待处理")
+    }
+
+    /** 就地写入专辑艺术家。全过程不改变文件长度，音频数据不受影响。 */
+    fun applyTagFix() {
+        val plan = tagCandidates ?: return
+        if (plan.isEmpty() || tagWriting) return
+        scope.launch {
+            tagWriting = true
+            val outcomes = withContext(Dispatchers.IO) {
+                plan.map { candidate ->
+                    TagFixOutcome(
+                        candidate.song,
+                        Mp3TagWriter.writeAlbumArtist(context, candidate.song.uri, candidate.target),
+                    )
+                }
+            }
+            tagWriting = false
+            tagOutcomes = outcomes
+            tagCandidates = null
+
+            val written = outcomes.mapNotNull { outcome ->
+                (outcome.result as? TagWriteResult.Written)?.let { outcome.song.id to it.value }
+            }.toMap()
+            songs = songs.map { song -> written[song.id]?.let { song.copy(albumArtist = it) } ?: song }
+
+            val ok = written.size
+            AppLog.i("专辑艺术家补全完成：成功 $ok / ${plan.size}（其余已跳过或失败，详见页面）")
+            notify(context.getString(R.string.tag_fix_done, ok, plan.size))
+        }
+    }
+
     /** 从任意入口打开某个歌手的匹配面板，保证行为一致。 */
     fun artistTarget(artist: String): MatchTarget = MatchTarget(
         title = artist,
@@ -515,6 +564,11 @@ private fun AppRoot() {
                         overwrite = value
                         prefs.overwriteExisting = value
                     },
+                    tagCandidates = tagCandidates,
+                    tagOutcomes = tagOutcomes,
+                    tagWriting = tagWriting,
+                    onPlanTagFix = { planTagFix() },
+                    onApplyTagFix = { applyTagFix() },
                     checkResult = checkResult,
                     checking = checking,
                     onRunCheck = { runCheck() },

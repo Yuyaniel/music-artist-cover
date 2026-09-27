@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 enum class Platform(val id: String, val displayName: String) {
     NETEASE("netease", "网易云音乐"),
     QQ("qq", "QQ音乐"),
+    DEEZER("deezer", "Deezer"),
 }
 
 /** 歌手名的来源：内置标签 / 文件名解析 / 未识别。 */
@@ -31,6 +32,8 @@ data class SongItem(
     val artist: String? = null,
     /** 拆分后的歌手列表（如 ["郭静", "韦礼安"]），匹配时逐个处理。 */
     val artists: List<String> = emptyList(),
+    /** 专辑艺术家标签原值（ID3 TPE2 / Vorbis ALBUMARTIST），可能为空。 */
+    val albumArtist: String? = null,
     val artistSource: ArtistSourceKind = ArtistSourceKind.UNKNOWN,
     val matchState: MatchState = MatchState.IDLE,
     val matchedArtist: String? = null,

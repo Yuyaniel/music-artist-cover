@@ -2,12 +2,15 @@ package com.musictag.artistcover.data
 
 import android.content.Context
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.net.Uri
 import com.musictag.artistcover.model.ArtistSourceKind
 
 data class SongMeta(
     val title: String?,
     val artist: String?,
+    /** 专辑艺术家标签原值（ID3 TPE2 等），可能为空。 */
+    val albumArtist: String?,
     val artists: List<String>,
     val kind: ArtistSourceKind,
 )
@@ -34,14 +37,20 @@ object MetadataReader {
 
     fun read(context: Context, uri: Uri, displayName: String): SongMeta {
         val baseName = displayName.substringBeforeLast('.')
-        val (tagTitle, tagArtist) = readTags(context, uri)
+        val tags = readTags(context, uri)
 
-        val resolvedTitle = tagTitle?.takeIf { it.isNotBlank() }
-        if (!tagArtist.isNullOrBlank()) {
+        val resolvedTitle = tags.title?.takeIf { it.isNotBlank() }
+        val tagArtist = tags.artist?.takeIf { it.isNotBlank() }
+        val tagAlbumArtist = tags.albumArtist?.takeIf { it.isNotBlank() }
+
+        // 演唱者优先；为空时用专辑艺术家兜底（合辑里演唱者经常是空的）
+        val effective = tagArtist ?: tagAlbumArtist
+        if (effective != null) {
             return SongMeta(
                 title = resolvedTitle ?: baseName,
-                artist = tagArtist,
-                artists = splitArtists(tagArtist),
+                artist = effective,
+                albumArtist = tagAlbumArtist,
+                artists = splitArtists(effective),
                 kind = ArtistSourceKind.ID3,
             )
         }
@@ -51,6 +60,7 @@ object MetadataReader {
             return SongMeta(
                 title = resolvedTitle ?: guess.second,
                 artist = guess.first,
+                albumArtist = null,
                 artists = splitArtists(guess.first),
                 kind = ArtistSourceKind.FILENAME,
             )
@@ -59,6 +69,7 @@ object MetadataReader {
         return SongMeta(
             title = resolvedTitle ?: baseName,
             artist = null,
+            albumArtist = tagAlbumArtist,
             artists = emptyList(),
             kind = ArtistSourceKind.UNKNOWN,
         )
@@ -116,15 +127,24 @@ object MetadataReader {
         return value
     }
 
-    private fun readTags(context: Context, uri: Uri): Pair<String?, String?> {
+    private class Tags(val title: String?, val artist: String?, val albumArtist: String?)
+
+    private fun readTags(context: Context, uri: Uri): Tags {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(context, uri)
-            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.trim()
-            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim()
-            title to artist
+            Tags(
+                title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.trim(),
+                artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim(),
+                // 专辑艺术家是 API 30（Android 11）才暴露的字段
+                albumArtist = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?.trim()
+                } else {
+                    null
+                },
+            )
         } catch (_: Throwable) {
-            null to null
+            Tags(null, null, null)
         } finally {
             runCatching { retriever.release() }
         }

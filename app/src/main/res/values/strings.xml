@@ -33,6 +33,17 @@
     <string name="sort_count_asc">作品最少</string>
     <string name="sort_recent_desc">最近添加</string>
 
+    <string name="section_tag_fix">补全专辑艺术家</string>
+    <string name="tag_fix_hint">专辑艺术家为空时用识别出的艺术家填充。仅支持 MP3，就地写入——不改文件长度、不动音频数据</string>
+    <string name="tag_fix_scan">扫描待补全</string>
+    <string name="tag_fix_none">没有需要补全的 MP3</string>
+    <string name="tag_fix_found">找到 %1$d 首待补全</string>
+    <string name="tag_fix_apply">全部写入</string>
+    <string name="tag_fix_writing">写入中…</string>
+    <string name="tag_fix_done">成功 %1$d / %2$d 首</string>
+    <string name="tag_fix_will_write">将写入 %1$s</string>
+    <string name="tag_fix_more">其余 %1$d 首未展开</string>
+
     <string name="section_check">本地检查</string>
     <string name="check_hint">对比歌曲里的歌手与保存文件夹里已有的图片，找出缺失和多余</string>
     <string name="check_now">开始检查</string>

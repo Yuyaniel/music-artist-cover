@@ -40,6 +40,9 @@ import androidx.compose.ui.unit.dp
 import com.musictag.artistcover.R
 import com.musictag.artistcover.data.ExtraImageFile
 import com.musictag.artistcover.data.LibraryCheckResult
+import com.musictag.artistcover.data.TagFixCandidate
+import com.musictag.artistcover.data.TagFixOutcome
+import com.musictag.artistcover.data.TagWriteResult
 import com.musictag.artistcover.model.MatchState
 import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
@@ -64,6 +67,11 @@ fun MatchPage(
     onRunCheck: () -> Unit,
     onDeleteExtras: (List<ExtraImageFile>) -> Unit,
     onMatchArtist: (String) -> Unit,
+    tagCandidates: List<TagFixCandidate>?,
+    tagOutcomes: List<TagFixOutcome>,
+    tagWriting: Boolean,
+    onPlanTagFix: () -> Unit,
+    onApplyTagFix: () -> Unit,
     results: List<SongItem>,
     appVersion: String,
     onRetry: (SongItem) -> Unit,
@@ -179,6 +187,16 @@ fun MatchPage(
                 )
             }
 
+            item {
+                TagFixSection(
+                    candidates = tagCandidates,
+                    outcomes = tagOutcomes,
+                    writing = tagWriting,
+                    onScan = onPlanTagFix,
+                    onApply = onApplyTagFix,
+                )
+            }
+
             if (results.isNotEmpty()) {
                 item {
                     Text(
@@ -204,6 +222,103 @@ fun MatchPage(
                     Button(onClick = onOpenRepo, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.open_repo))
                     }
+                }
+            }
+        }
+    }
+}
+
+/** 补全专辑艺术家标签：专辑艺术家为空时用识别出的艺术家填充（仅 MP3）。 */
+@Composable
+private fun TagFixSection(
+    candidates: List<TagFixCandidate>?,
+    outcomes: List<TagFixOutcome>,
+    writing: Boolean,
+    onScan: () -> Unit,
+    onApply: () -> Unit,
+) {
+    SectionCard(
+        title = stringResource(R.string.section_tag_fix),
+        subtitle = stringResource(R.string.tag_fix_hint),
+    ) {
+        Button(onClick = onScan, enabled = !writing, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.tag_fix_scan))
+        }
+
+        if (candidates != null) {
+            if (candidates.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.tag_fix_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SuccessColor,
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.tag_fix_found, candidates.size),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                candidates.take(20).forEach { candidate ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = candidate.song.displayTitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = stringResource(R.string.tag_fix_will_write, candidate.target),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (candidates.size > 20) {
+                    Text(
+                        text = stringResource(R.string.tag_fix_more, candidates.size - 20),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FaintText,
+                    )
+                }
+                Button(
+                    onClick = onApply,
+                    enabled = !writing,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (writing) stringResource(R.string.tag_fix_writing) else stringResource(R.string.tag_fix_apply))
+                }
+            }
+        }
+
+        if (outcomes.isNotEmpty()) {
+            val ok = outcomes.count { it.result is TagWriteResult.Written }
+            Text(
+                text = stringResource(R.string.tag_fix_done, ok, outcomes.size),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (ok == outcomes.size) SuccessColor else WarningColor,
+            )
+            outcomes.filter { it.result !is TagWriteResult.Written }.take(20).forEach { outcome ->
+                Column {
+                    Text(
+                        text = outcome.song.displayTitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = when (val result = outcome.result) {
+                            is TagWriteResult.Skipped -> result.reason
+                            is TagWriteResult.Failed -> "失败：${result.reason}"
+                            is TagWriteResult.Written -> ""
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FaintText,
+                    )
                 }
             }
         }

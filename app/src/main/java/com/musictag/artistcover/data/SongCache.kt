@@ -29,7 +29,7 @@ object SongCache {
      * 只要歌手解析规则或字段含义变了就 +1，旧缓存会被判为失效、自动重扫一次，
      * 免得用户拿着按旧规则解析出来的歌手名继续匹配。
      */
-    private const val CACHE_VERSION = 2
+    private const val CACHE_VERSION = 3
 
     fun load(context: Context, treeUri: String?): CachedSongs? {
         if (treeUri.isNullOrBlank()) return null
@@ -69,6 +69,7 @@ object SongCache {
         .put("addedAt", song.addedAt)
         .put("title", song.title ?: JSONObject.NULL)
         .put("artist", song.artist ?: JSONObject.NULL)
+        .put("albumArtist", song.albumArtist ?: JSONObject.NULL)
         .put("source", song.artistSource.name)
         .put("artists", JSONArray().apply { song.artists.forEach { put(it) } })
 
@@ -86,6 +87,7 @@ object SongCache {
             addedAt = json.optLong("addedAt"),
             title = json.optString("title").takeIf { it.isNotBlank() && it != "null" },
             artist = json.optString("artist").takeIf { it.isNotBlank() && it != "null" },
+            albumArtist = json.optString("albumArtist").takeIf { it.isNotBlank() && it != "null" },
             artists = artists,
             artistSource = runCatching { ArtistSourceKind.valueOf(json.optString("source")) }
                 .getOrDefault(ArtistSourceKind.UNKNOWN),
