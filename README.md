@@ -79,7 +79,7 @@ Android 应用：读取本地自定义文件夹里的歌曲，按歌手从网易
 
 | 平台 | 搜索接口 | 图片地址 |
 | --- | --- | --- |
-| 网易云音乐 | `music.163.com/api/search/get?s=<关键词>&type=100` | 响应中的 `result.artists[].picUrl`，追加 `?param=500y500` 缩图 |
+| 网易云音乐 | `music.163.com/api/search/get?s=<关键词>&type=100` | 响应中的 `result.artists[].img1v1Url`（**1:1 歌手头像**），追加 `?param=500y500` 缩图；头像缺失才退回 `picUrl` |
 | QQ音乐 | `c.y.qq.com/soso/fcgi-bin/client_search_cp?w=<关键词>&format=json`（必须带 `Referer: https://y.qq.com/`） | `y.gtimg.cn/music/photo_new/T001R500x500M000<mid>.jpg` |
 | **Deezer** | `api.deezer.com/search/artist?q=<关键词>` | 响应里的 `picture_xl`（1000×1000）/ `picture_big`（500×500） |
 

@@ -8,8 +8,13 @@ import org.json.JSONObject
 /**
  * 网易云音乐。
  *
- * 搜索接口：/api/search/get?type=100 直接返回歌手及其 picUrl，无需二次请求。
+ * 搜索接口：/api/search/get?type=100 直接返回歌手及其图片，无需二次请求。
  * 原图动辄 1MB 以上，统一追加 CDN 缩图参数。
+ *
+ * 取图务必**头像优先**：接口同时给出 picUrl 与 img1v1Url，
+ * - `img1v1Url` 是 1:1 的**歌手头像**（img1v1 = image 1v1），头像位专用；
+ * - `picUrl` 是歌手主页的**主图/横幅**，宽度不固定（如周杰伦的是 1050×800 的横图，
+ *   人物只占一角、大半是背景）。按正方形显示或保存时会被裁得很难看，不是用户要的头像。
  */
 object NeteaseSource : ArtistImageSource {
 
@@ -31,13 +36,20 @@ object NeteaseSource : ArtistImageSource {
             val candidateName = artist.optString("name")
             if (candidateName.isBlank()) continue
             val aliases = artist.optJSONArray("alias").toStringList()
-            val picUrl = artist.optString("picUrl").ifBlank { artist.optString("img1v1Url") }
-            if (picUrl.isBlank()) continue
+            val avatar = artist.optString("img1v1Url").takeIf { it.isNotBlank() }
+            val banner = artist.optString("picUrl").takeIf { it.isNotBlank() }
+            val primary = avatar ?: banner ?: continue
+            // 头像缺失时才退回横幅
+            val secondary = banner?.takeIf { it != primary }
             hits.add(
                 ArtistHit(
                     name = candidateName,
                     aliases = aliases,
-                    imageUrls = listOf("$picUrl?param=500y500", "$picUrl?param=300y300"),
+                    imageUrls = buildList {
+                        add("$primary?param=500y500")
+                        add("$primary?param=300y300")
+                        secondary?.let { add("$it?param=500y500") }
+                    },
                     platform = platform,
                 ),
             )
