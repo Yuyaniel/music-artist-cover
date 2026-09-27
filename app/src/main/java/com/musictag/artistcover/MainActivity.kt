@@ -33,8 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.documentfile.provider.DocumentFile
 import com.musictag.artistcover.data.AppLog
+import com.musictag.artistcover.data.DocumentQuery
 import com.musictag.artistcover.data.ExtraImageFile
 import com.musictag.artistcover.data.ImageDownloader
 import com.musictag.artistcover.data.LibraryCheckResult
@@ -44,7 +44,6 @@ import com.musictag.artistcover.data.MetadataReader
 import com.musictag.artistcover.data.NameMatcher
 import com.musictag.artistcover.data.Prefs
 import com.musictag.artistcover.data.SavedFiles
-import com.musictag.artistcover.data.SingleMatchEngine
 import com.musictag.artistcover.data.SongCache
 import com.musictag.artistcover.data.SongScanner
 import com.musictag.artistcover.model.ArtistGroup
@@ -94,7 +93,6 @@ private fun AppRoot() {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val prefs = remember { Prefs(context) }
-    val engine = remember { SingleMatchEngine(context) }
 
     var tab by remember { mutableStateOf(AppTab.Songs) }
     var songTreeUri by remember { mutableStateOf(prefs.songTreeUri?.let(Uri::parse)) }
@@ -125,7 +123,7 @@ private fun AppRoot() {
     }
 
     fun folderNameOf(uri: Uri): String? =
-        runCatching { DocumentFile.fromTreeUri(context, uri)?.name }.getOrNull() ?: uri.lastPathSegment
+        DocumentQuery.displayNameOf(context, uri) ?: uri.lastPathSegment
 
     fun togglePlatform(platform: Platform) {
         enabledPlatforms = if (platform in enabledPlatforms) enabledPlatforms - platform else enabledPlatforms + platform
@@ -145,10 +143,10 @@ private fun AppRoot() {
         prefs.setPlatformOrder(list)
     }
 
+    /** 重新读取保存文件夹索引：只发一次查询，几毫秒返回。 */
     fun refreshSavedFiles() {
         scope.launch {
-            val dir = withContext(Dispatchers.IO) { engine.resolveOutputDir(outputTreeUri) }
-            savedFiles = engine.loadSavedFiles(dir)
+            savedFiles = withContext(Dispatchers.IO) { SavedFiles.load(context, outputTreeUri) }
         }
     }
 
@@ -158,15 +156,14 @@ private fun AppRoot() {
             songFolderName = name ?: folderNameOf(uri)
             AppLog.i("开始扫描歌曲文件夹：${songFolderName ?: uri.lastPathSegment}")
             val items = withContext(Dispatchers.IO) {
-                SongScanner.scan(context, uri).map { doc ->
-                    val fileName = doc.name.orEmpty()
-                    val meta = MetadataReader.read(context, doc.uri, fileName)
+                SongScanner.scan(context, uri).map { entry ->
+                    val meta = MetadataReader.read(context, entry.uri, entry.name)
                     SongItem(
-                        id = doc.uri.toString(),
-                        uri = doc.uri,
-                        displayName = fileName,
-                        sizeBytes = doc.length(),
-                        addedAt = doc.lastModified(),
+                        id = entry.uri.toString(),
+                        uri = entry.uri,
+                        displayName = entry.name,
+                        sizeBytes = entry.sizeBytes,
+                        addedAt = entry.lastModified,
                         title = meta.title,
                         artist = meta.artist,
                         artists = meta.artists,
@@ -256,12 +253,6 @@ private fun AppRoot() {
             outUri == null -> notify(context.getString(R.string.need_output))
             matching -> Unit
             else -> scope.launch {
-                val dir = withContext(Dispatchers.IO) { DocumentFile.fromTreeUri(context, outUri) }
-                if (dir == null || !dir.canWrite()) {
-                    AppLog.e("保存文件夹不可写，请重新选择")
-                    notify(context.getString(R.string.need_output))
-                    return@launch
-                }
                 matching = true
                 progressDone = 0
                 progressTotal = target.size
@@ -279,7 +270,7 @@ private fun AppRoot() {
                     MatchEngine(context).match(
                         songs = target,
                         orderedPlatforms = activePlatforms,
-                        outputDir = dir,
+                        outputTreeUri = outUri,
                         overwrite = overwrite,
                         onSongUpdated = { updated ->
                             songs = songs.map { if (it.id == updated.id) updated else it }
@@ -311,12 +302,6 @@ private fun AppRoot() {
             outUri == null -> notify(context.getString(R.string.need_output))
             matching -> Unit
             else -> scope.launch {
-                val dir = withContext(Dispatchers.IO) { DocumentFile.fromTreeUri(context, outUri) }
-                if (dir == null || !dir.canWrite()) {
-                    AppLog.e("保存文件夹不可写，请重新选择")
-                    notify(context.getString(R.string.need_output))
-                    return@launch
-                }
                 val activePlatforms = platformOrder.filter { it in enabledPlatforms }
                 if (activePlatforms.isEmpty()) {
                     notify(context.getString(R.string.no_platform_selected))
@@ -333,7 +318,7 @@ private fun AppRoot() {
                     MatchEngine(context).matchArtists(
                         artists = artists,
                         orderedPlatforms = activePlatforms,
-                        outputDir = dir,
+                        outputTreeUri = outUri,
                         overwrite = overwrite,
                         onArtistDone = { outcome ->
                             val key = NameMatcher.normalize(outcome.artist)
@@ -418,8 +403,7 @@ private fun AppRoot() {
         if (files.isEmpty()) return
         scope.launch {
             val deleted = withContext(Dispatchers.IO) { LibraryChecker.deleteExtras(context, files) }
-            val dir = withContext(Dispatchers.IO) { engine.resolveOutputDir(outputTreeUri) }
-            val fresh = engine.loadSavedFiles(dir)
+            val fresh = withContext(Dispatchers.IO) { SavedFiles.load(context, outputTreeUri) }
             savedFiles = fresh
             checkResult = withContext(Dispatchers.IO) { LibraryChecker.check(songs, fresh) }
             AppLog.i("已删除多余图片 $deleted 个")
@@ -555,6 +539,7 @@ private fun AppRoot() {
         SingleMatchSheet(
             target = target,
             outputTreeUri = outputTreeUri,
+            savedFiles = savedFiles,
             overwrite = overwrite,
             onSaved = { savedTarget, outcome ->
                 refreshSavedFiles()

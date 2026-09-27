@@ -1,7 +1,7 @@
 package com.musictag.artistcover.data
 
 import android.content.Context
-import androidx.documentfile.provider.DocumentFile
+import android.net.Uri
 import com.musictag.artistcover.model.ArtistHit
 import com.musictag.artistcover.model.MatchState
 import com.musictag.artistcover.model.Platform
@@ -30,7 +30,7 @@ class MatchEngine(private val context: Context) {
     suspend fun match(
         songs: List<SongItem>,
         orderedPlatforms: List<Platform>,
-        outputDir: DocumentFile,
+        outputTreeUri: Uri,
         overwrite: Boolean,
         onSongUpdated: (SongItem) -> Unit,
         onProgress: (done: Int, total: Int) -> Unit,
@@ -59,7 +59,7 @@ class MatchEngine(private val context: Context) {
             songs.filter { it.id !in finalized && it.artistList.any { a -> NameMatcher.normalize(a) == key } }
                 .forEach { onSongUpdated(it.copy(matchState = MatchState.SEARCHING, error = null)) }
 
-            outcomes[key] = resolveArtist(artist, sources, outputDir, overwrite)
+            outcomes[key] = resolveArtist(artist, sources, outputTreeUri, overwrite)
 
             for (song in songs) {
                 if (song.id in finalized) continue
@@ -80,7 +80,7 @@ class MatchEngine(private val context: Context) {
     suspend fun matchArtists(
         artists: List<String>,
         orderedPlatforms: List<Platform>,
-        outputDir: DocumentFile,
+        outputTreeUri: Uri,
         overwrite: Boolean,
         onArtistDone: (ArtistOutcome) -> Unit,
         onProgress: (done: Int, total: Int) -> Unit,
@@ -93,7 +93,7 @@ class MatchEngine(private val context: Context) {
 
         for (artist in artists) {
             coroutineContext.ensureActive()
-            val outcome = resolveArtist(artist, sources, outputDir, overwrite)
+            val outcome = resolveArtist(artist, sources, outputTreeUri, overwrite)
             onArtistDone(outcome)
             done++
             onProgress(done, total)
@@ -104,7 +104,7 @@ class MatchEngine(private val context: Context) {
     private fun resolveArtist(
         artist: String,
         sources: List<ArtistImageSource>,
-        outputDir: DocumentFile,
+        outputTreeUri: Uri,
         overwrite: Boolean,
     ): ArtistOutcome {
         val hit = searchAcrossPlatforms(artist, sources)
@@ -112,7 +112,7 @@ class MatchEngine(private val context: Context) {
         return when (
             val result = ImageDownloader.download(
                 context = context,
-                outputDir = outputDir,
+                treeUri = outputTreeUri,
                 hit = hit,
                 http = http,
                 overwrite = overwrite,

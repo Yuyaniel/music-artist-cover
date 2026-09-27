@@ -45,7 +45,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.documentfile:documentfile:1.1.0")
 
     implementation("androidx.compose.ui:ui:1.11.1")
     implementation("androidx.compose.ui:ui-graphics:1.11.1")

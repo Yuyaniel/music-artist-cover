@@ -2,7 +2,6 @@ package com.musictag.artistcover.data
 
 import android.content.Context
 import android.net.Uri
-import androidx.documentfile.provider.DocumentFile
 import com.musictag.artistcover.model.ArtistCandidate
 import com.musictag.artistcover.model.ArtistMatch
 import com.musictag.artistcover.model.LocalArtistImage
@@ -37,35 +36,16 @@ class SingleMatchEngine(private val context: Context) {
     /** 预览解码目标尺寸，够大才能看清人脸。 */
     private val previewSize = 480
 
-    fun resolveOutputDir(treeUri: Uri?): DocumentFile? =
-        runCatching { treeUri?.let { DocumentFile.fromTreeUri(context, it) } }.getOrNull()
-
-    /** 列出保存文件夹里已有的文件，构建「文件名 → Uri」索引。 */
-    suspend fun loadSavedFiles(outputDir: DocumentFile?): SavedFiles = withContext(Dispatchers.IO) {
-        val files = outputDir?.let { dir -> runCatching { dir.listFiles() }.getOrNull() }
-            ?: return@withContext SavedFiles.EMPTY
-        // 按归一化文件名建索引，系统加过「(1)」后缀的副本同样算「已下载」
-        val map = LinkedHashMap<String, Uri>()
-        files.forEach { file ->
-            val raw = file.name ?: return@forEach
-            map.putIfAbsent(ImageDownloader.canonicalFileName(raw), file.uri)
-        }
-        SavedFiles(map)
-    }
-
-    /** 读取目标歌手在保存文件夹里已有的图片。 */
-    suspend fun loadLocalImages(artists: List<String>, outputDir: DocumentFile?): List<LocalArtistImage> =
+    /** 读取目标歌手在保存文件夹里已有的图片；索引由调用方一次查好传进来，这里不再查目录。 */
+    suspend fun loadLocalImages(artists: List<String>, saved: SavedFiles): List<LocalArtistImage> =
         withContext(Dispatchers.IO) {
             artists.map { artist ->
-                val expected = ImageDownloader.safeFileName(artist)
-                // 连同系统加过「(1)」后缀的旧文件一起认作已下载
-                val file = outputDir?.let { dir ->
-                    runCatching { ImageDownloader.findExistingFiles(dir, expected).firstOrNull() }.getOrNull()
-                }
+                val fileName = ImageDownloader.safeFileName(artist)
+                val uri = saved.uriOf(fileName)
                 LocalArtistImage(
                     artist = artist,
-                    fileName = file?.name,
-                    preview = file?.let { ArtworkCache.loadFromUri(context, it.uri, LOCAL_PREVIEW_SIZE) },
+                    fileName = if (uri != null) fileName else null,
+                    preview = uri?.let { ArtworkCache.loadFromUri(context, it, LOCAL_PREVIEW_SIZE) },
                 )
             }
         }
@@ -129,7 +109,7 @@ class SingleMatchEngine(private val context: Context) {
 
     /** 保存当前选中的候选。 */
     suspend fun save(
-        outputDir: DocumentFile,
+        outputTreeUri: Uri,
         matches: List<ArtistMatch>,
         overwrite: Boolean,
     ): SaveOutcome = withContext(Dispatchers.IO) {
@@ -150,7 +130,7 @@ class SingleMatchEngine(private val context: Context) {
             // 文件名用歌曲里识别出的歌手名（而不是平台返回的名字），
             // 这样「已下载/未下载」检测、覆盖判断才能对上同一个文件
             val fileName = ImageDownloader.safeFileName(match.artist)
-            when (val result = ImageDownloader.save(context, outputDir, fileName, data, overwrite)) {
+            when (val result = ImageDownloader.save(context, outputTreeUri, fileName, data, overwrite)) {
                 is SaveResult.Saved -> {
                     savedCount++
                     anyNew = true

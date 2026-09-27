@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.musictag.artistcover.R
 import com.musictag.artistcover.data.SaveOutcome
+import com.musictag.artistcover.data.SavedFiles
 import com.musictag.artistcover.data.SingleMatchEngine
 import com.musictag.artistcover.model.ArtistMatch
 import com.musictag.artistcover.model.LocalArtistImage
@@ -77,6 +78,7 @@ private val RESULT_THUMB = 88.dp
 fun SingleMatchSheet(
     target: MatchTarget,
     outputTreeUri: Uri?,
+    savedFiles: SavedFiles,
     overwrite: Boolean,
     onSaved: (MatchTarget, SaveOutcome) -> Unit,
     onDismiss: () -> Unit,
@@ -104,10 +106,10 @@ fun SingleMatchSheet(
     }
 
     fun runSave() {
-        val dir = engine.resolveOutputDir(outputTreeUri) ?: return
+        val treeUri = outputTreeUri ?: return
         scope.launch {
             saving = true
-            val outcome = engine.save(dir, matches, overwrite)
+            val outcome = engine.save(treeUri, matches, overwrite)
             saving = false
             onSaved(target, outcome)
             onDismiss()
@@ -118,10 +120,10 @@ fun SingleMatchSheet(
         matches = matches.map { if (it.artist == artist) it.copy(selected = index) else it }
     }
 
-    // 读取保存文件夹里已有的图片
-    LaunchedEffect(target, outputTreeUri) {
+    // 读取保存文件夹里已有的图片（索引已由外层一次查好，这里只解码缩略图）
+    LaunchedEffect(target, savedFiles) {
         readingLocal = true
-        locals = engine.loadLocalImages(target.artists, engine.resolveOutputDir(outputTreeUri))
+        locals = engine.loadLocalImages(target.artists, savedFiles)
         readingLocal = false
     }
 

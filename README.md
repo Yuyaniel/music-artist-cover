@@ -121,7 +121,8 @@ gradle assembleRelease
 
 - Kotlin + Jetpack Compose + Material 3（自定义主题，主色 `#0F766E`）
 - AGP 9.3.1 / Kotlin 2.3.21 / Gradle 9.5.0 / minSdk 26 / targetSdk 35
-- 存储访问：Storage Access Framework（`ACTION_OPEN_DOCUMENT_TREE` + `DocumentFile`），不申请任何存储权限
+- 存储访问：Storage Access Framework（`ACTION_OPEN_DOCUMENT_TREE`），不申请任何存储权限。
+  目录遍历**不使用 `androidx.documentfile`**：`DocumentFile` 只是个 URI 壳子，每读一次 `name`/`length`/`isDirectory` 都会单独发一次 ContentResolver 查询，几百个文件时会放大成几百次 binder 往返。改为自定义的 `DocumentQuery` 做**一次投影查询**把名字、大小、修改时间一并取回——扫描 1000 首歌从数千次查询降到几十次，刷新保存目录也从「每个文件一次」降到「整目录一次」
 - 网络：`HttpURLConnection` + 平台内置 `org.json`，零第三方网络库
 - 元数据：`MediaMetadataRetriever`
 
@@ -135,7 +136,8 @@ app/src/main/java/com/musictag/artistcover/
 ├── data/
 │   ├── Prefs.kt                 目录授权、平台开关、覆盖开关持久化
 │   ├── AppLog.kt                环形日志缓冲
-│   ├── SongScanner.kt           SAF 递归扫描音频
+│   ├── SongScanner.kt           SAF 递归扫描音频（每目录一次查询）
+│   ├── DocumentQuery.kt         SAF 目录投影查询（替代逐属性查询的 DocumentFile）
 │   ├── SongCache.kt             扫描结果持久化（启动秒开，不重扫）
 │   ├── DownloadStatus.kt        保存文件夹文件名索引 + 下载状态判定
 │   ├── MetadataReader.kt        标签读取 + 文件名解析 + 多歌手拆分

@@ -2,7 +2,6 @@ package com.musictag.artistcover.data
 
 import android.content.Context
 import android.net.Uri
-import androidx.documentfile.provider.DocumentFile
 import com.musictag.artistcover.model.SongItem
 
 /** 歌曲里有、但保存文件夹里没有图片的歌手。 */
@@ -62,8 +61,7 @@ object LibraryChecker {
     fun deleteExtras(context: Context, files: List<ExtraImageFile>): Int {
         var deleted = 0
         for (file in files) {
-            val doc = runCatching { DocumentFile.fromSingleUri(context, file.uri) }.getOrNull()
-            if (doc != null && runCatching { doc.delete() }.getOrDefault(false)) deleted++
+            if (DocumentQuery.delete(context, file.uri)) deleted++
         }
         return deleted
     }

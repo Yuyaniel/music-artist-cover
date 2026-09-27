@@ -1,5 +1,6 @@
 package com.musictag.artistcover.data
 
+import android.content.Context
 import android.net.Uri
 import com.musictag.artistcover.model.DownloadState
 
@@ -16,6 +17,26 @@ class SavedFiles(val files: Map<String, Uri>) {
 
     companion object {
         val EMPTY = SavedFiles(emptyMap())
+
+        /**
+         * 读取保存文件夹索引。
+         *
+         * 只发**一次** ContentResolver 查询；若改用 `DocumentFile.listFiles()` + `getName()`，
+         * 几百个文件会放大成几百次查询，刷新能卡好几秒。
+         */
+        fun load(context: Context, treeUri: Uri?): SavedFiles {
+            if (treeUri == null) return EMPTY
+            return try {
+                val map = LinkedHashMap<String, Uri>()
+                DocumentQuery.listChildren(context, treeUri).forEach { child ->
+                    if (child.isDirectory) return@forEach
+                    map.putIfAbsent(ImageDownloader.canonicalFileName(child.name), child.uri)
+                }
+                SavedFiles(map)
+            } catch (_: Throwable) {
+                EMPTY
+            }
+        }
     }
 }
 
