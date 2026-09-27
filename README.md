@@ -78,6 +78,26 @@ app\build\outputs\apk\release\app-release.apk
 gradle assembleRelease
 ```
 
+## 发布新版本
+
+1. 改 `app/build.gradle.kts` 里的 `versionName`（`versionCode` 是时间戳，自动递增，不用管）。
+2. 更新 `RELEASE.md`，它会作为 GitHub Release 的正文。
+3. 执行 `build-apk.cmd` 构建并签名。
+4. 提交并打 tag：
+   ```
+   git add -A
+   git commit -m "release: v1.0.1"
+   git tag -a v1.0.1 -m "v1.0.1"
+   git push origin main refs/tags/v1.0.1
+   ```
+5. 创建 Release 并上传 APK（需要一个有 `repo` 权限的 Personal Access Token）：
+   ```
+   powershell -ExecutionPolicy Bypass -File create-release.ps1 -Token <TOKEN> -Tag v1.0.1
+   ```
+   如果走本地代理，追加 `-Prox http://127.0.0.1:7890`。
+
+> 签名密钥 `release.keystore` 不在仓库里，请自行备份。丢失后新版本无法覆盖安装老版本。
+
 ## 技术栈
 
 - Kotlin + Jetpack Compose + Material 3（自定义主题，主色 `#0F766E`）
