@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置。
+
+  原先在 AndroidManifest 里开了全局 usesCleartextTraffic="true"，等于允许 App
+  跟任何域名走明文 HTTP —— 302 重定向一旦被中间人改写成 http://，流量就会静默降级。
+
+  这里改成默认禁止明文，只对本应用真正会用到的图片 CDN 单独放行（兜底那些
+  仍以 http 提供图片的节点）。接口与图片域名本来都是 HTTPS，正常情况下不会命中放行项。
+-->
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 网易云音乐图片 CDN -->
+        <domain includeSubdomains="true">music.126.net</domain>
+        <domain includeSubdomains="true">126.net</domain>
+        <domain includeSubdomains="true">163.com</domain>
+        <!-- QQ 音乐图片 CDN 与接口 -->
+        <domain includeSubdomains="true">gtimg.cn</domain>
+        <domain includeSubdomains="true">qq.com</domain>
+    </domain-config>
+
+</network-security-config>

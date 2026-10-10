@@ -64,6 +64,7 @@ import com.musictag.artistcover.theme.FaintText
 import com.musictag.artistcover.theme.InfoColor
 import com.musictag.artistcover.theme.MutedText
 import com.musictag.artistcover.theme.SuccessColor
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private val LOCAL_ART_BOX = 148.dp
@@ -83,6 +84,8 @@ fun SingleMatchSheet(
     outputTreeUri: Uri?,
     savedFiles: SavedFiles,
     overwrite: Boolean,
+    platformOrder: List<Platform>,
+    enabledPlatforms: Set<Platform>,
     onSaved: (MatchTarget, SaveOutcome) -> Unit,
     /** 单个歌手单独保存：不关闭面板，方便接着存下一位。 */
     onArtistSaved: (MatchTarget, SaveOutcome) -> Unit,
@@ -93,7 +96,14 @@ fun SingleMatchSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val engine = remember { SingleMatchEngine(context) }
 
-    var platform by remember(target) { mutableStateOf(Platform.NETEASE) }
+    // 尊重「设置」页里的平台开关与优先级；全被关掉时退回优先级表，免得面板没得选
+    val availablePlatforms = remember(platformOrder, enabledPlatforms) {
+        platformOrder.filter { it in enabledPlatforms }.ifEmpty { platformOrder }
+    }
+
+    var platform by remember(target) {
+        mutableStateOf(availablePlatforms.firstOrNull() ?: Platform.NETEASE)
+    }
     var searching by remember(target) { mutableStateOf(false) }
     var saving by remember(target) { mutableStateOf(false) }
     var matches by remember(target) { mutableStateOf<List<ArtistMatch>>(emptyList()) }
@@ -108,15 +118,21 @@ fun SingleMatchSheet(
     /** 已单独保存过的歌手，用于在框内做「已保存」标记。 */
     var savedArtists by remember(target) { mutableStateOf<Set<String>>(emptySet()) }
     var savingArtist by remember(target) { mutableStateOf<String?>(null) }
+    /** 上一次搜索任务：切平台 / 改名 / 重搜前先取消，避免旧请求的结果盖掉新请求的。 */
+    var searchJob by remember(target) { mutableStateOf<Job?>(null) }
 
     fun queries(): List<ArtistQuery> = target.artists.mapIndexed { index, artist ->
         ArtistQuery(artist, searchNames.getOrElse(index) { artist })
     }
 
     fun runSearch() {
-        scope.launch {
+        searchJob?.cancel()
+        searchJob = scope.launch {
             searching = true
             savedArtists = emptySet()
+            // engine.search 内部是 withContext(IO)，恢复时会检查取消状态：
+            // 旧任务即使网络已经返回，也不会再写 matches，于是不会出现
+            // 「平台标签停在 QQ、候选图却是网易云」的错位
             matches = engine.search(queries(), platform, target.title)
             searching = false
         }
@@ -175,7 +191,8 @@ fun SingleMatchSheet(
         if (index < 0 || index >= target.artists.size || newName.isEmpty()) return
         editingIndex = -1
         searchNames = searchNames.toMutableList().also { it[index] = newName }
-        scope.launch {
+        searchJob?.cancel()
+        searchJob = scope.launch {
             searching = true
             val updated = engine.searchOne(ArtistQuery(target.artists[index], newName), platform)
             matches = matches.toMutableList().also { if (index < it.size) it[index] = updated }
@@ -247,7 +264,7 @@ fun SingleMatchSheet(
                     subtitle = stringResource(R.string.platform_results_hint),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Platform.entries.forEach { item ->
+                        availablePlatforms.forEach { item ->
                             Box(modifier = Modifier.weight(1f)) {
                                 FilterChip(
                                     selected = platform == item,

@@ -65,6 +65,7 @@ fun MatchPage(
     onDeleteExtras: (List<ExtraImageFile>) -> Unit,
     onMatchArtist: (String) -> Unit,
     results: List<SongItem>,
+    matching: Boolean,
     appVersion: String,
     onRetry: (SongItem) -> Unit,
     onOpenRepo: () -> Unit,
@@ -138,7 +139,7 @@ fun MatchPage(
                 ) {
                     Text(
                         text = if (outputFolderName == null) stringResource(R.string.pick_output_folder)
-                        else "点击可更换保存文件夹",
+                        else stringResource(R.string.change_output_folder),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MutedText,
                     )
@@ -188,7 +189,8 @@ fun MatchPage(
                     )
                 }
                 items(items = results, key = { "result-${it.id}" }) { song ->
-                    ResultRow(song = song, onRetry = { onRetry(song) }, enabled = true)
+                    // 批量任务进行中禁用重试，否则会和当前任务并发跑同一批网络请求
+                    ResultRow(song = song, onRetry = { onRetry(song) }, enabled = !matching)
                 }
             }
 

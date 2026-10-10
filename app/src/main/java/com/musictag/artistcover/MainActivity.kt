@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.musictag.artistcover.data.AppLog
+import com.musictag.artistcover.data.ArtistOutcome
+import com.musictag.artistcover.data.ArtworkCache
 import com.musictag.artistcover.data.DocumentQuery
 import com.musictag.artistcover.data.ExtraImageFile
 import com.musictag.artistcover.data.ImageDownloader
@@ -164,38 +166,46 @@ private fun AppRoot() {
         }
     }
 
-    val scanFolder: (Uri, String?) -> Unit = { uri, name ->
+    fun scanFolder(uri: Uri, name: String?) {
+        // 同步置位：scope.launch 只是投递任务，标志若写在协程体里，
+        // 「重新扫描」与文件夹选择在同一帧内触发时会重复扫描。
+        if (scanning) return
+        scanning = true
         scope.launch {
-            scanning = true
-            songFolderName = name ?: folderNameOf(uri)
-            AppLog.i("开始扫描歌曲文件夹：${songFolderName ?: uri.lastPathSegment}")
-            val items = withContext(Dispatchers.IO) {
-                SongScanner.scan(context, uri).map { entry ->
-                    val meta = MetadataReader.read(context, entry.uri, entry.name)
-                    SongItem(
-                        id = entry.uri.toString(),
-                        uri = entry.uri,
-                        displayName = entry.name,
-                        sizeBytes = entry.sizeBytes,
-                        addedAt = entry.lastModified,
-                        title = meta.title,
-                        artist = meta.artist,
-                        artists = meta.artists,
-                        artistSource = meta.kind,
-                    )
+            try {
+                songFolderName = name ?: folderNameOf(uri)
+                AppLog.i("开始扫描歌曲文件夹：${songFolderName ?: uri.lastPathSegment}")
+                val items = withContext(Dispatchers.IO) {
+                    SongScanner.scan(context, uri).map { entry ->
+                        val meta = MetadataReader.read(context, entry.uri, entry.name)
+                        SongItem(
+                            id = entry.uri.toString(),
+                            uri = entry.uri,
+                            displayName = entry.name,
+                            sizeBytes = entry.sizeBytes,
+                            addedAt = entry.lastModified,
+                            title = meta.title,
+                            artist = meta.artist,
+                            artists = meta.artists,
+                            artistSource = meta.kind,
+                        )
+                    }
                 }
-            }
-            songs = items
-            selectedIds = selectedIds.filter { id -> items.any { it.id == id } }.toSet()
-            scanning = false
-            if (items.isEmpty()) {
-                AppLog.w("该文件夹内没有找到支持的音频文件")
-            } else {
-                val now = System.currentTimeMillis()
-                cachedAt = now
-                withContext(Dispatchers.IO) { SongCache.save(context, uri.toString(), items) }
-                val artistCount = items.sumOf { it.artistList.size }
-                AppLog.i("扫描完成并写入缓存：共 ${items.size} 首，识别出 $artistCount 位歌手")
+                songs = items
+                // 曲库整个换掉了，旧的封面 / 缩略图缓存全部作废：既释放内存，也避免按 uri 串图
+                ArtworkCache.clear()
+                selectedIds = selectedIds.filter { id -> items.any { it.id == id } }.toSet()
+                if (items.isEmpty()) {
+                    AppLog.w("该文件夹内没有找到支持的音频文件")
+                } else {
+                    val now = System.currentTimeMillis()
+                    cachedAt = now
+                    withContext(Dispatchers.IO) { SongCache.save(context, uri.toString(), items) }
+                    val artistCount = items.sumOf { it.artistList.size }
+                    AppLog.i("扫描完成并写入缓存：共 ${items.size} 首，识别出 $artistCount 位歌手")
+                }
+            } finally {
+                scanning = false
             }
         }
     }
@@ -266,44 +276,50 @@ private fun AppRoot() {
             target.isEmpty() -> notify(context.getString(R.string.need_selection))
             outUri == null -> notify(context.getString(R.string.need_output))
             matching -> Unit
-            else -> scope.launch {
+            else -> {
+                // 同步置位：标志若写在协程体里，同一帧内的第二次点击仍会看到 false 而重复启动
                 matching = true
-                progressDone = 0
-                progressTotal = target.size
-                val activePlatforms = platformOrder.filter { it in enabledPlatforms }
-                if (activePlatforms.isEmpty()) {
-                    notify(context.getString(R.string.no_platform_selected))
-                    return@launch
+                scope.launch {
+                    try {
+                        progressDone = 0
+                        progressTotal = target.size
+                        val activePlatforms = platformOrder.filter { it in enabledPlatforms }
+                        if (activePlatforms.isEmpty()) {
+                            notify(context.getString(R.string.no_platform_selected))
+                            return@launch
+                        }
+                        val artistCount = target.sumOf { it.artistList.size }
+                        AppLog.i(
+                            "开始匹配 ${target.size} 首歌曲（含 $artistCount 个歌手条目），来源：${activePlatforms.joinToString("、") { it.displayName }}" +
+                                if (overwrite) "，覆盖旧图" else "，保留旧图",
+                        )
+                        // 阻塞式 IO 由 MatchEngine 内部切到 IO 线程，这里留在主线程，
+                        // 于是回调里的 songs 回写是主线程上的原子读改写，不再跨线程竞争
+                        MatchEngine(context).match(
+                            songs = target,
+                            orderedPlatforms = activePlatforms,
+                            outputTreeUri = outUri,
+                            overwrite = overwrite,
+                            onSongUpdated = { updated ->
+                                songs = songs.map { if (it.id == updated.id) updated else it }
+                            },
+                            onProgress = { done, total ->
+                                progressDone = done
+                                progressTotal = total
+                            },
+                        )
+                        val ids = target.map { it.id }.toSet()
+                        val done = songs.count { it.id in ids && it.matchState == MatchState.DONE }
+                        val skipped = songs.count { it.id in ids && it.matchState == MatchState.EXISTS }
+                        val partial = songs.count { it.id in ids && it.matchState == MatchState.PARTIAL }
+                        AppLog.i("匹配结束：新下载 $done 首，已存在 $skipped 首，部分成功 $partial 首")
+                        refreshSavedFiles()
+                        checkResult = null
+                        tab = AppTab.Settings
+                    } finally {
+                        matching = false
+                    }
                 }
-                val artistCount = target.sumOf { it.artistList.size }
-                AppLog.i(
-                    "开始匹配 ${target.size} 首歌曲（含 $artistCount 个歌手条目），来源：${activePlatforms.joinToString("、") { it.displayName }}" +
-                        if (overwrite) "，覆盖旧图" else "，保留旧图",
-                )
-                withContext(Dispatchers.IO) {
-                    MatchEngine(context).match(
-                        songs = target,
-                        orderedPlatforms = activePlatforms,
-                        outputTreeUri = outUri,
-                        overwrite = overwrite,
-                        onSongUpdated = { updated ->
-                            songs = songs.map { if (it.id == updated.id) updated else it }
-                        },
-                        onProgress = { done, total ->
-                            progressDone = done
-                            progressTotal = total
-                        },
-                    )
-                }
-                matching = false
-                val ids = target.map { it.id }.toSet()
-                val done = songs.count { it.id in ids && it.matchState == MatchState.DONE }
-                val skipped = songs.count { it.id in ids && it.matchState == MatchState.EXISTS }
-                val partial = songs.count { it.id in ids && it.matchState == MatchState.PARTIAL }
-                AppLog.i("匹配结束：新下载 $done 首，已存在 $skipped 首，部分成功 $partial 首")
-                refreshSavedFiles()
-                checkResult = null
-                tab = AppTab.Settings
             }
         }
     }
@@ -315,57 +331,48 @@ private fun AppRoot() {
             artists.isEmpty() -> notify(context.getString(R.string.need_selection))
             outUri == null -> notify(context.getString(R.string.need_output))
             matching -> Unit
-            else -> scope.launch {
-                val activePlatforms = platformOrder.filter { it in enabledPlatforms }
-                if (activePlatforms.isEmpty()) {
-                    notify(context.getString(R.string.no_platform_selected))
-                    return@launch
-                }
+            else -> {
                 matching = true
-                progressDone = 0
-                progressTotal = artists.size
-                AppLog.i(
-                    "开始按歌手匹配 ${artists.size} 位，来源：${activePlatforms.joinToString("、") { it.displayName }}" +
-                        if (overwrite) "，覆盖旧图" else "，保留旧图",
-                )
-                withContext(Dispatchers.IO) {
-                    MatchEngine(context).matchArtists(
-                        artists = artists,
-                        orderedPlatforms = activePlatforms,
-                        outputTreeUri = outUri,
-                        overwrite = overwrite,
-                        onArtistDone = { outcome ->
-                            val key = NameMatcher.normalize(outcome.artist)
-                            songs = songs.map { song ->
-                                if (song.artistList.none { NameMatcher.normalize(it) == key }) {
-                                    song
-                                } else {
-                                    song.copy(
-                                        matchState = when {
-                                            outcome.hit == null -> MatchState.NOT_FOUND
-                                            outcome.fileName == null -> MatchState.FAILED
-                                            outcome.savedNow -> MatchState.DONE
-                                            else -> MatchState.EXISTS
-                                        },
-                                        matchedArtist = outcome.hit?.name ?: song.matchedArtist,
-                                        platform = outcome.hit?.platform ?: song.platform,
-                                        savedName = outcome.fileName ?: song.savedName,
-                                        error = outcome.error,
-                                    )
-                                }
-                            }
-                        },
-                        onProgress = { done, total ->
-                            progressDone = done
-                            progressTotal = total
-                        },
-                    )
+                scope.launch {
+                    try {
+                        val activePlatforms = platformOrder.filter { it in enabledPlatforms }
+                        if (activePlatforms.isEmpty()) {
+                            notify(context.getString(R.string.no_platform_selected))
+                            return@launch
+                        }
+                        progressDone = 0
+                        progressTotal = artists.size
+                        AppLog.i(
+                            "开始按歌手匹配 ${artists.size} 位，来源：${activePlatforms.joinToString("、") { it.displayName }}" +
+                                if (overwrite) "，覆盖旧图" else "，保留旧图",
+                        )
+                        // 累积每位歌手的结果，再按「歌」聚合。
+                        // 不能像以前那样拿最后处理的那位歌手的结果整体覆写整首歌：
+                        // 「郭静成功 + 韦礼安未命中」应判为部分成功，而不是未匹配。
+                        val outcomes = HashMap<String, ArtistOutcome>()
+                        MatchEngine(context).matchArtists(
+                            artists = artists,
+                            orderedPlatforms = activePlatforms,
+                            outputTreeUri = outUri,
+                            overwrite = overwrite,
+                            onArtistDone = { outcome ->
+                                outcomes[NameMatcher.normalize(outcome.artist)] = outcome
+                                val snapshot = outcomes.toMap()
+                                songs = songs.map { song -> mergeArtistOutcomes(song, snapshot) }
+                            },
+                            onProgress = { done, total ->
+                                progressDone = done
+                                progressTotal = total
+                            },
+                        )
+                        refreshSavedFiles()
+                        checkResult = null
+                        AppLog.i("按歌手匹配结束，共处理 ${artists.size} 位")
+                        tab = AppTab.Settings
+                    } finally {
+                        matching = false
+                    }
                 }
-                matching = false
-                refreshSavedFiles()
-                checkResult = null
-                AppLog.i("按歌手匹配结束，共处理 ${artists.size} 位")
-                tab = AppTab.Settings
             }
         }
     }
@@ -374,22 +381,29 @@ private fun AppRoot() {
         if (songs.isEmpty()) {
             emptyList()
         } else {
+            // 用归一化名做 key：同一歌手若写成「周杰伦 / 周杰倫」，不该在列表里出现两行，
+            // 否则两行都指向同一份本地图片，状态显示会自相矛盾。
             val counts = LinkedHashMap<String, Int>()
             val latest = LinkedHashMap<String, Long>()
+            val displayNames = LinkedHashMap<String, String>()
             songs.forEach { song ->
                 song.artistList.forEach { name ->
-                    counts[name] = (counts[name] ?: 0) + 1
-                    latest[name] = maxOf(latest[name] ?: 0L, song.addedAt)
+                    val key = NameMatcher.normalize(name)
+                    if (key.isEmpty()) return@forEach
+                    displayNames.putIfAbsent(key, name)
+                    counts[key] = (counts[key] ?: 0) + 1
+                    latest[key] = maxOf(latest[key] ?: 0L, song.addedAt)
                 }
             }
             // 排序交给 SongPage（用户可切换），这里只负责聚合
-            counts.map { (name, songCount) ->
+            counts.map { (key, songCount) ->
+                val name = displayNames[key] ?: key
                 val fileName = ImageDownloader.safeFileName(name)
                 val uri = savedFiles.uriOf(fileName)
                 ArtistGroup(
                     name = name,
                     songCount = songCount,
-                    latestAddedAt = latest[name] ?: 0L,
+                    latestAddedAt = latest[key] ?: 0L,
                     savedFileName = if (uri != null) fileName else null,
                     savedUri = uri,
                 )
@@ -402,12 +416,17 @@ private fun AppRoot() {
         when {
             songs.isEmpty() -> notify(context.getString(R.string.need_songs_first))
             checking -> Unit
-            else -> scope.launch {
+            else -> {
                 checking = true
-                val result = withContext(Dispatchers.IO) { LibraryChecker.check(songs, savedFiles) }
-                checkResult = result
-                checking = false
-                AppLog.i("本地检查：缺少 ${result.missing.size} 位歌手，多余 ${result.extra.size} 个文件")
+                scope.launch {
+                    try {
+                        val result = withContext(Dispatchers.IO) { LibraryChecker.check(songs, savedFiles) }
+                        checkResult = result
+                        AppLog.i("本地检查：缺少 ${result.missing.size} 位歌手，多余 ${result.extra.size} 个文件")
+                    } finally {
+                        checking = false
+                    }
+                }
             }
         }
     }
@@ -462,13 +481,21 @@ private fun AppRoot() {
     }
 
     /** 从任意入口打开某个歌手的匹配面板，保证行为一致。 */
-    fun artistTarget(artist: String): MatchTarget = MatchTarget(
-        title = artist,
-        subtitle = context.getString(R.string.artist_song_count, songs.count { artist in it.artistList }),
-        artists = listOf(artist),
-        songId = null,
-        relatedSongs = songs.filter { artist in it.artistList },
-    )
+    fun artistTarget(artist: String): MatchTarget {
+        // 按归一化名找作品：歌手名可能存在不同写法（全/半角、简繁、多余空格），
+        // 用精确字符串比较会漏掉本该算作同一位歌手的歌。
+        val key = NameMatcher.normalize(artist)
+        val related = songs.filter { song ->
+            song.artistList.any { NameMatcher.normalize(it) == key }
+        }
+        return MatchTarget(
+            title = artist,
+            subtitle = context.getString(R.string.artist_song_count, related.size),
+            artists = listOf(artist),
+            songId = null,
+            relatedSongs = related,
+        )
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -571,6 +598,7 @@ private fun AppRoot() {
                     onDeleteExtras = { files -> deleteExtraImages(files) },
                     onMatchArtist = { artist -> matchTarget = artistTarget(artist) },
                     results = songs.filter { it.matchState != MatchState.IDLE },
+                    matching = matching,
                     appVersion = BuildConfig.VERSION_NAME,
                     onRetry = { song -> matchSongs(listOf(song)) },
                     onOpenRepo = {
@@ -591,6 +619,8 @@ private fun AppRoot() {
             outputTreeUri = outputTreeUri,
             savedFiles = savedFiles,
             overwrite = overwrite,
+            platformOrder = platformOrder,
+            enabledPlatforms = enabledPlatforms,
             onArtistSaved = { savedTarget, outcome -> applySingleArtistSave(savedTarget, outcome) },
             onSaved = { savedTarget, outcome ->
                 refreshSavedFiles()
@@ -616,4 +646,43 @@ private fun AppRoot() {
         )
     }
 
+}
+
+/**
+ * 把「按歌手」的批量结果合并进一首歌的状态。
+ *
+ * 多歌手歌曲必须等**所有**歌手都有结果后才定性，并且部分成功要判 PARTIAL。
+ * 直接拿最后处理的那位歌手的结果整体覆写，会把「一位成功、一位失败」错报成未匹配 ——
+ * 界面显示未匹配、文件夹里却已经多了一张图，用户只能反复重试。
+ */
+private fun mergeArtistOutcomes(song: SongItem, outcomes: Map<String, ArtistOutcome>): SongItem {
+    val artists = song.artistList
+    if (artists.isEmpty()) return song
+
+    val resolved = artists.map { outcomes[NameMatcher.normalize(it)] }
+    if (resolved.any { it == null }) return song   // 还有歌手没处理完，先不动这首歌
+
+    val list = resolved.filterNotNull()
+    val hits = list.mapNotNull { it.hit }
+    val failed = list.filter { it.hit == null || it.fileName == null }
+    val savedNames = list.mapNotNull { it.fileName }
+
+    val state = when {
+        hits.isEmpty() -> if (list.any { it.error != null }) MatchState.FAILED else MatchState.NOT_FOUND
+        failed.isNotEmpty() -> MatchState.PARTIAL
+        list.any { it.savedNow } -> MatchState.DONE
+        else -> MatchState.EXISTS
+    }
+
+    return song.copy(
+        matchState = state,
+        matchedArtist = hits.joinToString("、") { it.name }.ifBlank { null } ?: song.matchedArtist,
+        platform = hits.firstOrNull()?.platform ?: song.platform,
+        savedName = savedNames.joinToString("、").ifBlank { null } ?: song.savedName,
+        error = when (state) {
+            MatchState.PARTIAL -> "未成功：" + failed.joinToString("、") { it.artist }
+            MatchState.FAILED -> list.firstNotNullOfOrNull { it.error }
+            else -> null
+        },
+    )
 }

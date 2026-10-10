@@ -1,40 +1,30 @@
 package com.musictag.artistcover.data
 
-import androidx.compose.runtime.mutableStateListOf
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import android.util.Log
 
-enum class LogLevel { INFO, WARN, ERROR }
-
-data class LogEntry(
-    val time: String,
-    val level: LogLevel,
-    val message: String,
-)
-
-/** 运行日志：环形缓冲，供日志页直接订阅。 */
+/**
+ * 应用日志。
+ *
+ * 原先把日志塞进一个 Compose 状态列表里等界面订阅，但日志页早已被移除，
+ * 那份 400 条环形缓冲就成了纯负担：每次调用都要格式化时间、在同步块里改列表，
+ * 而且只在内存里打转，真出问题时根本捞不出来。
+ *
+ * 现在统一转发到 logcat（`adb logcat -s MusicArtistCover`），日志能真正被看到，
+ * 调用点一行都不用改。
+ */
 object AppLog {
-    private const val MAX_ENTRIES = 400
 
-    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
-    val entries = mutableStateListOf<LogEntry>()
+    private const val TAG = "MusicArtistCover"
 
-    fun i(message: String) = append(LogLevel.INFO, message)
-
-    fun w(message: String) = append(LogLevel.WARN, message)
-
-    fun e(message: String) = append(LogLevel.ERROR, message)
-
-    fun clear() {
-        entries.clear()
+    fun i(message: String) {
+        Log.i(TAG, message)
     }
 
-    @Synchronized
-    private fun append(level: LogLevel, message: String) {
-        if (entries.size >= MAX_ENTRIES) {
-            entries.removeAt(0)
-        }
-        entries.add(LogEntry(timeFormat.format(Date()), level, message))
+    fun w(message: String) {
+        Log.w(TAG, message)
+    }
+
+    fun e(message: String) {
+        Log.e(TAG, message)
     }
 }

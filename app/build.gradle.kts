@@ -15,7 +15,9 @@ android {
         targetSdk = 35
         // versionCode 用秒级时间戳单调递增，保证任何一次构建都能覆盖安装；
         // versionName 给用户看的，保持干净的语义化版本。
-        versionCode = (System.currentTimeMillis() / 1000L).toInt()
+        // 钳到商店允许的上限 2_100_000_000：秒级时间戳在 2038-01-19 之后会溢出成负数，
+        // 那时商店会直接拒收、设备也装不上。钳位后最坏是停在同一值，但绝不会变负。
+        versionCode = (System.currentTimeMillis() / 1000L).coerceIn(1L, 2_100_000_000L).toInt()
         versionName = "1.2.0"
     }
 

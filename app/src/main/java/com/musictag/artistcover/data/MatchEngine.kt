@@ -6,8 +6,10 @@ import com.musictag.artistcover.model.ArtistHit
 import com.musictag.artistcover.model.MatchState
 import com.musictag.artistcover.model.Platform
 import com.musictag.artistcover.model.SongItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
 /** 某个歌手的处理结果。 */
@@ -32,38 +34,58 @@ class MatchEngine(private val context: Context) {
         orderedPlatforms: List<Platform>,
         outputTreeUri: Uri,
         overwrite: Boolean,
-        onSongUpdated: (SongItem) -> Unit,
-        onProgress: (done: Int, total: Int) -> Unit,
+        onSongUpdated: suspend (SongItem) -> Unit,
+        onProgress: suspend (done: Int, total: Int) -> Unit,
     ) {
         if (songs.isEmpty()) return
         val sources = SourceRegistry.ordered(orderedPlatforms)
         val total = songs.size
-        val outcomes = LinkedHashMap<String, ArtistOutcome>()
+        val outcomes = HashMap<String, ArtistOutcome>()
         val finalized = HashSet<String>()
-        var done = 0
 
-        songs.filter { it.artistList.isEmpty() }.forEach { song ->
-            onSongUpdated(song.copy(matchState = MatchState.NOT_FOUND, error = "未能识别歌手名"))
-            finalized.add(song.id)
+        // 预计算「每首歌的归一化歌手键」+「歌手键 → 歌曲」倒排索引。
+        // 原先内层对**每一首歌**都跑一次 aggregate()，等于 O(歌手数 × 歌曲数) 次 normalize；
+        // 千首级曲库下这是千万次字符串分配。改成倒排后，总工作量只跟「歌手-歌曲关系数」成正比。
+        val keysOfSong = HashMap<String, List<String>>()
+        val songsOfKey = LinkedHashMap<String, MutableList<SongItem>>()
+        for (song in songs) {
+            val keys = song.artistList.map { NameMatcher.normalize(it) }.distinct()
+            keysOfSong[song.id] = keys
+            keys.forEach { key -> songsOfKey.getOrPut(key) { mutableListOf() }.add(song) }
         }
-        done = finalized.size
+
+        // 按归一化键去重：同一歌手写成「周杰伦 / 周杰倫」时只搜一次
+        val uniqueArtists = LinkedHashMap<String, String>()
+        for (song in songs) {
+            for (name in song.artistList) {
+                uniqueArtists.putIfAbsent(NameMatcher.normalize(name), name)
+            }
+        }
+
+        var done = 0
+        for (song in songs) {
+            if (keysOfSong[song.id].isNullOrEmpty()) {
+                onSongUpdated(song.copy(matchState = MatchState.NOT_FOUND, error = "未能识别歌手名"))
+                finalized.add(song.id)
+                done++
+            }
+        }
         onProgress(done, total)
 
-        val uniqueArtists = LinkedHashSet<String>()
-        songs.forEach { song -> song.artistList.forEach { uniqueArtists.add(it) } }
-
-        for (artist in uniqueArtists) {
+        for ((key, artist) in uniqueArtists) {
             coroutineContext.ensureActive()
-            val key = NameMatcher.normalize(artist)
+            val affected = songsOfKey[key].orEmpty()
 
-            songs.filter { it.id !in finalized && it.artistList.any { a -> NameMatcher.normalize(a) == key } }
+            affected.filter { it.id !in finalized }
                 .forEach { onSongUpdated(it.copy(matchState = MatchState.SEARCHING, error = null)) }
 
             outcomes[key] = resolveArtist(artist, sources, outputTreeUri, overwrite)
 
-            for (song in songs) {
+            // 一首歌只可能在「它最后一位未处理的歌手」刚处理完时凑齐，
+            // 所以只需复查受本次影响的这几首，不必再扫全表。
+            for (song in affected) {
                 if (song.id in finalized) continue
-                val updated = aggregate(song, outcomes) ?: continue
+                val updated = aggregate(song, keysOfSong[song.id].orEmpty(), outcomes) ?: continue
                 onSongUpdated(updated)
                 finalized.add(song.id)
                 done++
@@ -82,8 +104,8 @@ class MatchEngine(private val context: Context) {
         orderedPlatforms: List<Platform>,
         outputTreeUri: Uri,
         overwrite: Boolean,
-        onArtistDone: (ArtistOutcome) -> Unit,
-        onProgress: (done: Int, total: Int) -> Unit,
+        onArtistDone: suspend (ArtistOutcome) -> Unit,
+        onProgress: suspend (done: Int, total: Int) -> Unit,
     ) {
         if (artists.isEmpty()) return
         val sources = SourceRegistry.ordered(orderedPlatforms)
@@ -101,15 +123,20 @@ class MatchEngine(private val context: Context) {
         }
     }
 
-    private fun resolveArtist(
+    /**
+     * 搜索 + 下载一位歌手。整段是阻塞式的网络与 SAF 写入，
+     * 所以在这里切到 IO 线程；这样 [match] / [matchArtists] 本身跑在调用方
+     * 的线程上，回调（界面状态回写）就自然落在主线程，不需要跨线程改状态。
+     */
+    private suspend fun resolveArtist(
         artist: String,
         sources: List<ArtistImageSource>,
         outputTreeUri: Uri,
         overwrite: Boolean,
-    ): ArtistOutcome {
+    ): ArtistOutcome = withContext(Dispatchers.IO) {
         val hit = searchAcrossPlatforms(artist, sources)
-            ?: return ArtistOutcome(artist, null, null, false, null)
-        return when (
+            ?: return@withContext ArtistOutcome(artist, null, null, false, null)
+        when (
             val result = ImageDownloader.download(
                 context = context,
                 treeUri = outputTreeUri,
@@ -125,11 +152,18 @@ class MatchEngine(private val context: Context) {
         }
     }
 
-    /** 返回 null 表示这首歌还有歌手没处理完。 */
-    private fun aggregate(song: SongItem, outcomes: Map<String, ArtistOutcome>): SongItem? {
-        val artists = song.artistList
-        if (artists.isEmpty()) return null
-        val resolved = artists.map { outcomes[NameMatcher.normalize(it)] }
+    /**
+     * 把一首歌的所有歌手结果合并成最终状态；返回 null 表示这首歌还有歌手没处理完。
+     *
+     * [keys] 是这首歌预计算好的归一化歌手键，避免在热路径里反复 normalize。
+     */
+    private fun aggregate(
+        song: SongItem,
+        keys: List<String>,
+        outcomes: Map<String, ArtistOutcome>,
+    ): SongItem? {
+        if (keys.isEmpty()) return null
+        val resolved = keys.map { outcomes[it] }
         if (resolved.any { it == null }) return null
 
         val list = resolved.filterNotNull()

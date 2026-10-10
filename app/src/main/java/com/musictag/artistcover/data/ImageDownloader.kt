@@ -34,7 +34,9 @@ object ImageDownloader {
     /** 「歌手名.jpg」，文件名中的非法字符统一替换，控制长度以免超出文件系统限制。 */
     fun safeFileName(artistName: String): String {
         val cleaned = ILLEGAL_CHARS.replace(artistName, "_").trim().trimEnd('.', ' ')
-        val base = cleaned.ifBlank { "未知歌手" }.take(60)
+        // 截断之后必须再清一次尾部：take() 可能正好停在 '.' 或空格上，
+        // 那样拼出来会变成「xxx..jpg」这种既难看、又可能被文件系统拒绝的名字。
+        val base = cleaned.ifBlank { "未知歌手" }.take(60).trimEnd('.', ' ').ifBlank { "未知歌手" }
         return "$base.jpg"
     }
 
@@ -198,7 +200,14 @@ object ImageDownloader {
             .forEach { DocumentQuery.delete(context, it.uri) }
     }
 
-    /** 优先用「wt」（截断）模式，失败再退到「w」。 */
+    /**
+     * 优先用「wt」（截断）模式，失败再退到「w」。
+     *
+     * 退到「w」时必须回查落盘大小：部分 provider 的「w」并不截断，
+     * 旧文件比新图长时尾部会留下上一次的脏字节，JPEG 直接损坏。
+     * 大小对不上就判这次写入失败，交给上层如实报错——与 [verifyOnDisk] 同一思路：
+     * 宁可报失败，也不谎报成功。
+     */
     private fun writeInto(context: Context, uri: Uri, bytes: ByteArray): Boolean {
         for (mode in listOf("wt", "w")) {
             try {
@@ -206,6 +215,11 @@ object ImageDownloader {
                 stream.use { out ->
                     out.write(bytes)
                     out.flush()
+                }
+                if (mode == "w") {
+                    val written = DocumentQuery.sizeOf(context, uri)
+                    // written == 0 说明 provider 不报大小，此时无从判断，留给 verifyOnDisk 兜底
+                    if (written > 0L && written != bytes.size.toLong()) continue
                 }
                 return true
             } catch (_: Throwable) {

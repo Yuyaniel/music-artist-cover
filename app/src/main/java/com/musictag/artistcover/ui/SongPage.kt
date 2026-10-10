@@ -206,7 +206,11 @@ fun SongPage(
                             )
                         }
                     }
-                    IconButton(onClick = onRescan, enabled = folderName != null && !isScanning) {
+                    // 匹配进行中禁用重扫：否则会与匹配任务并发改写 songs，导致状态回退
+                    IconButton(
+                        onClick = onRescan,
+                        enabled = folderName != null && !isScanning && !matching,
+                    ) {
                         Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.rescan))
                     }
                 },
@@ -487,7 +491,8 @@ private fun FolderCard(
         ) {
             Column {
                 Text(
-                    text = if (isScanning) stringResource(R.string.scanning) else "$songCount 个音频文件",
+                    text = if (isScanning) stringResource(R.string.scanning)
+                    else stringResource(R.string.audio_file_count, songCount),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MutedText,
                 )
